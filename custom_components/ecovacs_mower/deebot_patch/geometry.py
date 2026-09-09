@@ -344,25 +344,15 @@ def parse_map_trace(blob: bytes) -> CoveredArea:
 
     **A border job moves the live outline into section 3** and leaves
     section 1 holding the batch id alone — one record per run, newest
-    first, renumbered as runs are added (GOAT G1-800, fw 1.36.208,
-    issue #52).
-
-    A border job, not any running job. An auto mow of the same lawn on
-    the same firmware — started, paused, resumed and stopped across
-    thirty-five minutes — kept the classic section-1 form for its whole
-    length, section 3 empty in every blob. The ``on_map_trace_g1800_job_*``
-    fixtures are a border session: their timestamps fall inside the border
-    start and stop captured on issue #12. So what this reads is coverage
-    that has never worked for one task type, not a regression in ordinary
-    mowing.
-
-    Not a firmware dialect either: the same device sent the classic
-    section-1 form eighteen seconds before that job started. Section 3
-    was empty in all 3660 blobs of the issue-41 captures, and those were
-    all taken on an idle mower, which is why it read as unused. The two
-    sections share a coordinate frame and a dialect — an idle snapshot
-    and a mid-job record of the same capture carry a verbatim six-point
-    run — so both feed ``areas``.
+    first, renumbered as runs are added. An auto mow on the same device
+    and firmware keeps the classic section-1 form throughout, so this is
+    a per-task shape rather than a firmware dialect, and coverage of a
+    border job had never worked (GOAT G1-800, fw 1.36.208; the captures
+    and the auto-versus-border comparison are on issue #52). Sections 1
+    and 3 share a coordinate frame — an idle snapshot and a mid-job
+    record of the same capture carry a verbatim six-point run — so both
+    feed ``areas``. Section 3 was empty in all 3660 blobs of the issue-41
+    captures because those were taken on an idle mower.
 
     Records carry a leading id that ``_points`` drops, so an id-only
     record decodes to an empty polygon. Those are discarded from both

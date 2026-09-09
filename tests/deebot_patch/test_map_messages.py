@@ -216,8 +216,9 @@ def test_on_map_trace_notifies_the_live_runs_of_a_job() -> None:
 def test_on_map_trace_notifies_an_emptied_blob() -> None:
     # The filter drops empty polygons, never the event. A blob whose
     # sections hold nothing but ids is how the mower says the coverage is
-    # gone — it sends one a second into every job — and the map layer only
-    # clears itself if that still arrives as an event.
+    # gone — the firmware sent one a second into the border job captured on
+    # issue #52 — and the map layer only clears itself if that still
+    # arrives as an event.
     events = _notified(OnMapTrace, "on_map_trace_g1800_job_cleared")
     assert len(events) == 1
     assert isinstance(events[0], MowerCoveredAreaEvent)

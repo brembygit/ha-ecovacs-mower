@@ -357,13 +357,13 @@ def test_parse_map_trace_idle_still_reads_section_1() -> None:
     assert covered.holes == []
 
 
-def test_parse_map_trace_drops_the_id_only_record_of_a_running_job() -> None:
-    # The whole freeze in issue #52 hangs off this one filter. A job puts
-    # the batch id alone in section 1; kept, it decodes to [] and the event
-    # is areas=[[]] on every blob for the length of the job, so the bus
-    # dedups all of them against the first and the coverage layer stops
-    # moving. Asserted on its own because it looks like a tidiness check
-    # that a later refactor would drop.
+def test_parse_map_trace_drops_the_id_only_record_of_a_border_job() -> None:
+    # The whole freeze in issue #52 hangs off this one filter. A border job
+    # puts the batch id alone in section 1; kept, it decodes to [] and the
+    # event is areas=[[]] on every blob for the length of the job, so the
+    # bus dedups all of them against the first and the coverage layer
+    # stops moving. Asserted on its own because it looks like a tidiness
+    # check that a later refactor would drop.
     covered = parse_map_trace(
         b'[["1","1958878756;"],["2"],["3"]]'
     )
