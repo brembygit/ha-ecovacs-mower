@@ -1,9 +1,16 @@
 """The patched area capability reaches the actual device definition."""
 
-import pytest
-from deebot_client.hardware import _DEVICES
+from dataclasses import replace
 
-from .. import requires_ha
+import pytest
+from deebot_client.hardware import _DEVICES, get_static_device_info
+
+from custom_components.ecovacs_mower.deebot_patch import (
+    PatchContractError,
+    verify_capabilities,
+)
+from custom_components.ecovacs_mower.deebot_patch.hardware import patch_device_info
+from custom_components.ecovacs_mower.deebot_patch.zonal import MowArea
 
 O800 = "9bts2s"
 A1600_LIDAR = "e4gqia"
@@ -23,11 +30,6 @@ def _clear_cache():
 @pytest.mark.parametrize("class_", [O800, A1600_LIDAR])
 async def test_verify_capabilities_accepts_patched_area_gating(class_: str) -> None:
     """Zone and non-zone classes both satisfy the capability contract."""
-    from deebot_client.hardware import get_static_device_info
-
-    from custom_components.ecovacs_mower.deebot_patch import verify_capabilities
-    from custom_components.ecovacs_mower.deebot_patch.hardware import patch_device_info
-
     await patch_device_info(class_)
     info = await get_static_device_info(class_)
 
@@ -36,15 +38,6 @@ async def test_verify_capabilities_accepts_patched_area_gating(class_: str) -> N
 
 async def test_verify_capabilities_rejects_a_zone_device_without_mow_area() -> None:
     """The contract catches a zone device whose patched area was lost."""
-    from dataclasses import replace
-    from deebot_client.hardware import get_static_device_info
-
-    from custom_components.ecovacs_mower.deebot_patch import (
-        PatchContractError,
-        verify_capabilities,
-    )
-    from custom_components.ecovacs_mower.deebot_patch.hardware import patch_device_info
-
     await patch_device_info(A1600_LIDAR)
     info = await get_static_device_info(A1600_LIDAR)
     capabilities = replace(
@@ -61,11 +54,6 @@ async def test_verify_capabilities_rejects_a_zone_device_without_mow_area() -> N
 
 async def test_zone_device_receives_mow_area() -> None:
     """The zone class carries MowArea while the O800 keeps its library area."""
-    from deebot_client.hardware import get_static_device_info
-
-    from custom_components.ecovacs_mower.deebot_patch.hardware import patch_device_info
-    from custom_components.ecovacs_mower.deebot_patch.zonal import MowArea
-
     await patch_device_info(A1600_LIDAR)
     await patch_device_info(O800)
     zone = await get_static_device_info(A1600_LIDAR)
