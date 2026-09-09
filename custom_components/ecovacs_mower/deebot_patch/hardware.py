@@ -1,8 +1,8 @@
 """Seeds deebot-client's device cache with corrected capabilities.
 
 ``get_static_device_info()`` reads the ``_DEVICES`` cache before importing the
-device module. By letting the library build its own definition, swapping out the
-broken parts and putting the result back, we avoid monkeypatching any
+device module. By letting the library build its own definition, swapping out
+the broken parts and putting the result back, we avoid monkeypatching any
 function — we use the same mechanism the library itself uses.
 """
 
