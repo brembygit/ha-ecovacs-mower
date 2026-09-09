@@ -372,10 +372,10 @@ class EcovacsController:
     def start_polling(self, device: Device) -> None:
         """Start asking for the mower's state and stats, unless already doing so.
 
-        Public: lawn_mower.py's start-mowing command calls this directly. A
-        command sent from HA never produces a StateEvent by itself — only a
-        confirmed push does — so nothing else would restart the tick if that
-        push never lands.
+        Public: lawn_mower.py calls this directly from its start-mowing and
+        mow-area commands. A command sent from HA never produces a
+        StateEvent by itself — only a confirmed push does — so nothing else
+        would restart the tick if that push never lands.
         """
         did = device.device_info["did"]
         if did not in self._unsub_polls:
