@@ -335,19 +335,42 @@ def parse_map_track(blob: bytes) -> MapTrack:
 
 
 def parse_map_trace(blob: bytes) -> CoveredArea:
-    """Parse onMapTrace: ``[["1","0;<x,y>;…"],["2","0;<x,y>;…", …],["3"]]``.
+    """Parse onMapTrace: ``[["1","0;<x,y>;…"],["2","0;<x,y>;…", …],["3", …]]``.
 
     Firmware 1.17's replacement for onMapTrack, and a different shape:
     section 1 is the outline of what has been mowed and section 2 the
-    unmowed islands inside it, where onMapTrack sent spans per row.
-    Section 3 was empty in all 3660 blobs of the issue-41 captures. Every
+    unmowed islands inside it, where onMapTrack sent spans per row. Every
     blob is a complete snapshot, never an increment.
+
+    **A border job moves the live outline into section 3** and leaves
+    section 1 holding the batch id alone — one record per run, newest
+    first, renumbered as runs are added. An auto mow on the same device
+    and firmware keeps the classic section-1 form throughout, so this is
+    a per-task shape rather than a firmware dialect, and coverage of a
+    border job had never worked (GOAT G1-800, fw 1.36.208; the captures
+    and the auto-versus-border comparison are on issue #52). Sections 1
+    and 3 share a coordinate frame — an idle snapshot and a mid-job
+    record of the same capture carry a verbatim six-point run — so both
+    feed ``areas``. Section 3 was empty in all 3660 blobs of the issue-41
+    captures because those were taken on an idle mower.
+
+    Records carry a leading id that ``_points`` drops, so an id-only
+    record decodes to an empty polygon. Those are discarded from both
+    lists rather than kept: an id-only section 1 is what a border job
+    sends, and an ``areas=[[]]`` that never changes makes the event bus
+    dedup every later blob against the first, freezing the coverage layer
+    for the length of the job. The filter is the fix, not tidiness. No
+    captured blob holds an id-only hole record, so section 2 is covered
+    for symmetry rather than against a known shape.
     """
-    sections: dict[str, list[Polygon]] = {"1": [], "2": []}
+    sections: dict[str, list[Polygon]] = {"1": [], "2": [], "3": []}
     for entry in json.loads(blob):
         if (section := sections.get(entry[0])) is not None:
             section.extend(_points(record) for record in entry[1:])
-    return CoveredArea(areas=sections["1"], holes=sections["2"])
+    return CoveredArea(
+        areas=[points for points in sections["1"] + sections["3"] if points],
+        holes=[points for points in sections["2"] if points],
+    )
 
 
 def parse_special_contour(blob: bytes) -> list[Polygon]:
