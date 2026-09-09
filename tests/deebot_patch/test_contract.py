@@ -577,3 +577,21 @@ def test_a_refresh_is_not_expected_to_produce_an_event() -> None:
     source = inspect.getsource(EventBus._call_refresh_function)
     assert "last_event" not in source
     assert "retry" not in source
+
+
+def test_the_v2_trace_name_falls_back_to_our_handler() -> None:
+    # Firmware 1.36 sends onMapTrace_V2, not onMapTrace — every g1800
+    # fixture in test_geometry.py was captured under that name.
+    # get_message() reaches our class by stripping the suffix, which only
+    # works while upstream leaves the full name unclaimed. If it ever ships
+    # an OnMapTraceV2 the strip stops being reached and issue #52 is
+    # silently back; the answer then is to register under the full name as
+    # well, not to delete this assertion.
+    from custom_components.ecovacs_mower.deebot_patch import apply
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        OnMapTrace,
+    )
+
+    apply()
+    assert "onMapTrace_V2" not in MESSAGES
+    assert MESSAGES["onMapTrace"] is OnMapTrace

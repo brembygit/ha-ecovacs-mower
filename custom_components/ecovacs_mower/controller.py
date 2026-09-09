@@ -317,9 +317,10 @@ class EcovacsController:
             save()
 
         async def on_positions(event: PositionsEvent) -> None:
-            # Position is volatile — no save. A valid charger position has
-            # never been observed on the verified hardware, but if one
-            # arrives it beats the origin assumption.
+            # Position is volatile — no save. No valid charger position was
+            # observed on firmware 1.11.31 or 1.13.10, which is why the map
+            # defaults to the origin; 1.36.208 does send one, and a reported
+            # position beats the assumption either way (issue #52).
             for position in event.positions:
                 if position.type is PositionType.DEEBOT:
                     mower_map.update_position(
@@ -372,10 +373,10 @@ class EcovacsController:
     def start_polling(self, device: Device) -> None:
         """Start asking for the mower's state and stats, unless already doing so.
 
-        Public: lawn_mower.py's start-mowing command calls this directly. A
-        command sent from HA never produces a StateEvent by itself — only a
-        confirmed push does — so nothing else would restart the tick if that
-        push never lands.
+        Public: lawn_mower.py calls this directly from its start-mowing and
+        mow-area commands. A command sent from HA never produces a
+        StateEvent by itself — only a confirmed push does — so nothing else
+        would restart the tick if that push never lands.
         """
         did = device.device_info["did"]
         if did not in self._unsub_polls:

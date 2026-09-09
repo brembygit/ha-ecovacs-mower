@@ -308,3 +308,27 @@ def test_on_map_info_does_not_inherit_the_outline_version_filter() -> None:
     ]
     assert len(events) == 1
     assert events[0].boundary[0] == (-11918, 1959)
+
+
+def test_on_map_trace_notifies_the_live_runs_of_a_job() -> None:
+    # The same decode as test_geometry, but through the handler and on the
+    # firmware that reported issue #52: two runs out of section 3, and not
+    # the empty polygon an id-only section 1 used to contribute.
+    events = _notified(OnMapTrace, "on_map_trace_g1800_job_two_runs")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerCoveredAreaEvent)
+    assert [len(area) for area in events[0].areas] == [7, 52]
+    assert events[0].holes == []
+
+
+def test_on_map_trace_notifies_an_emptied_blob() -> None:
+    # The filter drops empty polygons, never the event. A blob whose
+    # sections hold nothing but ids is how the mower says the coverage is
+    # gone — the firmware sent one a second into the border job captured on
+    # issue #52 — and the map layer only clears itself if that still
+    # arrives as an event.
+    events = _notified(OnMapTrace, "on_map_trace_g1800_job_cleared")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerCoveredAreaEvent)
+    assert events[0].areas == []
+    assert events[0].holes == []
