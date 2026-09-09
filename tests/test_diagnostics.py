@@ -94,10 +94,12 @@ def test_keys_observed_on_real_hardware_are_covered_or_deliberately_public() -> 
     was already masked for exactly this reason; it was added by hand, because
     nothing could have failed to point at it.
 
-    This is the key set observed on GOAT hardware, which is the shape that
-    actually reaches a diagnostics report. It is what caught ``btMac``: a
-    Bluetooth MAC shipping in the clear past a REDACT that listed ``mac`` and
-    therefore looked like it covered the case.
+    This is the key set one GOAT G1-800 (``77atlz``, firmware 1.36.208) put
+    in its payload, which is the shape that actually reaches a diagnostics
+    report. It is what caught ``btMac``: a Bluetooth MAC shipping in the
+    clear past a REDACT that listed ``mac`` and therefore looked like it
+    covered the case. Another class or firmware may carry keys this one does
+    not; a second observed set belongs here as a union, not a replacement.
 
     Keys only, never values — the point of the file this guards is that real
     values do not get published, and a fixture is not an exception to that.
