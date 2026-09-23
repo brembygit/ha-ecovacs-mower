@@ -164,6 +164,32 @@ repository:
 3. Settings → Devices & services → **Add integration** → search for
    "Ecovacs Mower"
 
+### If it stops loading after a restart: another integration's `deebot-client`
+
+The symptom is a mower that stays `unavailable` after some restarts and not
+others. Reloading the integration does not help, but a full restart
+sometimes does. The log names this integration, with an import error like:
+
+```
+ImportError: cannot import name 'DeviceVerificationRequiredError' from 'deebot_client.exceptions'
+```
+
+Suspect another custom integration that also uses `deebot-client` and pins
+an older version. The usual culprit is a replacement for Home Assistant's
+built-in `ecovacs` integration: several community copies, made to get
+around Ecovacs' device-verification change in July 2026, install under the
+`ecovacs` domain and pin `deebot-client==18.4.0`. Only one version of the
+library can be installed at a time, and 18.4.0 predates the
+device-verification error this integration handles. Which of the two pins
+wins can depend on which integration Home Assistant sets up first, which
+is why the failure can come and go between restarts (issue #107).
+
+To check, look in `config/custom_components/` for a folder other than this
+one whose `manifest.json` lists `deebot-client`. Remove it, or update it to
+the version in this integration's `manifest.json`, then restart Home
+Assistant. If you had installed it to replace the built-in `ecovacs`
+integration for a vacuum, removing it puts the built-in one back.
+
 ### First-time setup: expect a verification code
 
 Since July 2026, Ecovacs requires device verification for new client IDs
