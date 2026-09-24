@@ -79,6 +79,7 @@ def test_no_stale_button_translations_or_icons() -> None:
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         MOWER_COMMAND_DESCRIPTIONS,
+        VACUUM_COMMAND_DESCRIPTIONS,
         EcovacsClearFaultButtonEntity,
     )
 
@@ -92,6 +93,7 @@ def test_no_stale_button_translations_or_icons() -> None:
             *ENTITY_DESCRIPTIONS,
             *LIFESPAN_ENTITY_DESCRIPTIONS,
             *MOWER_COMMAND_DESCRIPTIONS,
+            *VACUUM_COMMAND_DESCRIPTIONS,
         )
     } | {EcovacsClearFaultButtonEntity.entity_description.translation_key}
     assert set(strings["entity"]["button"]) <= keys
@@ -288,3 +290,44 @@ def test_mower_command_buttons_are_built_per_class() -> None:
         ("77atlz", "end_task"),
         ("2px96q", "end_task"),
     }
+
+
+def test_the_vacuum_command_button_is_app_start() -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.button import VACUUM_COMMAND_DESCRIPTIONS
+
+    assert [d.key for d in VACUUM_COMMAND_DESCRIPTIONS] == ["app_start"]
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+    for description in VACUUM_COMMAND_DESCRIPTIONS:
+        assert description.translation_key in strings["entity"]["button"]
+        assert description.translation_key in icons["entity"]["button"]
+
+
+async def test_the_app_start_button_sends_the_home_card_start() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.button import (
+        VACUUM_COMMAND_DESCRIPTIONS,
+        EcovacsMowerCommandButtonEntity,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+        CleanV2AppStart,
+    )
+
+    device = MagicMock()
+    device.device_info = {"did": "test-did", "class": "twunby"}
+    controller = MagicMock()
+    entity = EcovacsMowerCommandButtonEntity(
+        device, controller, VACUUM_COMMAND_DESCRIPTIONS[0]
+    )
+    entity._execute_command = AsyncMock()
+
+    await entity.async_press()
+
+    (command,), _ = entity._execute_command.call_args
+    assert isinstance(command, CleanV2AppStart)
+    controller.start_polling.assert_not_called()

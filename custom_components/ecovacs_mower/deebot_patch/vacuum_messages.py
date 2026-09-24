@@ -25,6 +25,7 @@ device.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary, WeakSet
 
@@ -211,3 +212,47 @@ class SetAutoEmptyVacuum(ExecuteCommand):
 
         self._args = self._params(enable, frequency, intensity)
         return await super()._execute(authenticator, device_info, event_bus)
+
+
+class CleanV2AppStart(ExecuteCommand):
+    """An auto clean start in the shape the app's home-screen card sends it.
+
+    The app has two start buttons. The one on the robot's own page sends its
+    requests with ``channel "android"``; the "Start" button on the robot's
+    card in the app's home screen reaches the robot as a ``clean_V2`` whose
+    header says ``channel "ROP"`` and whose data carries ``noVoiceResp``.
+    Seen on a T90 (firmware 1.103.0) on 2026-09-24::
+
+        header {"ver": 0.1, "priority": 1, "ts": <ms>, "channel": "ROP"}
+        data   {"act": "start", "content": {"type": "auto"}, "noVoiceResp": 0}
+
+    Only that card's start was seen to complete the app's daily "automatic
+    clean" reward task, at the press. This command reproduces what the robot
+    receives, header included, so that whether the robot-side shape alone is
+    enough can be tested from Home Assistant. It does not reproduce the app's
+    own HTTP call behind the card, which Home Assistant cannot see.
+
+    Not a CleanV2: that class turns a start into a resume when the robot is
+    paused, and a resume is not what the card sends.
+    """
+
+    NAME = "clean_V2"
+
+    def __init__(self) -> None:
+        super().__init__(
+            {"act": "start", "content": {"type": "auto"}, "noVoiceResp": 0}
+        )
+
+    def _get_payload(self) -> dict[str, Any]:
+        # The library's header is {"pri": "1", "ts": <s>, "tzm": 480,
+        # "ver": "0.0.50"}; this one copies the captured request field for
+        # field, down to the numeric types and the millisecond timestamp.
+        return {
+            "header": {
+                "ver": 0.1,
+                "priority": 1,
+                "ts": int(time.time() * 1000),
+                "channel": "ROP",
+            },
+            "body": {"data": self._args},
+        }

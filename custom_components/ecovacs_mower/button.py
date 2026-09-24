@@ -26,6 +26,11 @@ the device's recorded map id, the other sends a ``CleanAction`` HA's
 ``EcovacsMowerCommandButtonEntityDescription``, whose ``command_fn`` builds
 the command from the device at press time. A third such button is one more
 entry in ``MOWER_COMMAND_DESCRIPTIONS``.
+
+The verified vacuums get command buttons through the same description and
+entity classes: ``VACUUM_COMMAND_DESCRIPTIONS``, built only for
+``EcovacsController.vacuums``. Its one button, ``app_start``, sends the start
+the app's home-screen card sends (``CleanV2AppStart``).
 """
 
 from __future__ import annotations
@@ -59,6 +64,7 @@ from .deebot_patch.commands import CleanMower
 from .deebot_patch.hardware import BORDER_CLASSES
 from .deebot_patch.map_messages import MowerMapInfoEvent
 from .deebot_patch.state_precedence import map_id_for
+from .deebot_patch.vacuum_messages import CleanV2AppStart
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
@@ -171,6 +177,20 @@ MOWER_COMMAND_DESCRIPTIONS: tuple[EcovacsMowerCommandButtonEntityDescription, ..
 )
 
 
+VACUUM_COMMAND_DESCRIPTIONS: tuple[EcovacsMowerCommandButtonEntityDescription, ...] = (
+    EcovacsMowerCommandButtonEntityDescription(
+        key="app_start",
+        translation_key="app_start",
+        command_fn=lambda device: CleanV2AppStart(),
+        # Every verified vacuum: the list is already limited to the classes
+        # deebot_patch/vacuum.py supports. starts_job stays False because the
+        # controller's poll is a mower's; the vacuum's state comes from pushes.
+        classes=None,
+        starts_job=False,
+    ),
+)
+
+
 def _mower_command_entities(
     controller: EcovacsController,
 ) -> list[EcovacsMowerCommandButtonEntity]:
@@ -211,6 +231,11 @@ async def async_setup_entry(
         if device.capabilities.device_type is DeviceType.MOWER
     )
     entities.extend(_mower_command_entities(controller))
+    entities.extend(
+        EcovacsMowerCommandButtonEntity(device, controller, description)
+        for device in controller.vacuums
+        for description in VACUUM_COMMAND_DESCRIPTIONS
+    )
     async_add_entities(entities)
 
 

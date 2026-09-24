@@ -58,6 +58,7 @@
       "rain_protect": { "name": "Rain sensor" }
     },
     "button": {
+      "app_start": { "name": "Start (app home card)" },
       "clear_fault": { "name": "Clear fault" },
       "end_task": { "name": "End mowing task" },
       "mow_border": { "name": "Mow border" },

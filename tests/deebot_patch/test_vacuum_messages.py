@@ -15,6 +15,7 @@ from deebot_client.models import State
 
 from custom_components.ecovacs_mower.deebot_patch import apply
 from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+    CleanV2AppStart,
     GetAutoEmptyVacuum,
     GetWorkStateVacuum,
     OnAutoEmptyVacuum,
@@ -267,3 +268,39 @@ async def test_a_refusal_is_reported_as_a_failure() -> None:
         )
 
     assert result.state is HandlingState.FAILED
+
+
+def test_the_app_start_copies_the_home_card_request() -> None:
+    # The clean_V2 the app's home-screen "Start" sent on 2026-09-24, field for
+    # field: the header's numeric types and millisecond timestamp included.
+    payload = CleanV2AppStart()._get_payload()
+
+    header = payload["header"]
+    assert set(header) == {"ver", "priority", "ts", "channel"}
+    assert header["ver"] == 0.1
+    assert header["priority"] == 1
+    assert header["channel"] == "ROP"
+    assert isinstance(header["ts"], int)
+    assert header["ts"] > 10**12  # milliseconds, not the library's seconds
+    assert payload["body"] == {
+        "data": {"act": "start", "content": {"type": "auto"}, "noVoiceResp": 0}
+    }
+    assert CleanV2AppStart.NAME == "clean_V2"
+
+
+async def test_the_app_start_is_sent_as_a_start_even_when_paused() -> None:
+    # CleanV2 would turn a start on a paused robot into a resume; the card's
+    # request is always a start.
+    bus = _vacuum_bus()
+    bus.notify(StateEvent(State.PAUSED))
+    sent: list[dict] = []
+
+    async def fake_request(self, _authenticator, _device_info):
+        sent.append(self._get_payload()["body"]["data"])
+        return {"ret": "ok", "resp": {"body": {"code": 0, "msg": "ok"}}}
+
+    with patch.object(CleanV2AppStart, "_execute_api_request", fake_request):
+        result, _ = await CleanV2AppStart()._execute(Mock(), _device_info(), bus)
+
+    assert result.state is HandlingState.SUCCESS
+    assert [data["act"] for data in sent] == ["start"]
