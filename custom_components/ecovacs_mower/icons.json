@@ -76,6 +76,14 @@
         }
       }
     },
+    "select": {
+      "auto_empty": {
+        "default": "mdi:robot-vacuum"
+      },
+      "work_mode": {
+        "default": "mdi:vacuum"
+      }
+    },
     "sensor": {
       "activity": {
         "default": "mdi:robot-mower-outline",
@@ -156,6 +164,11 @@
       },
       "true_detect": {
         "default": "mdi:laser-pointer"
+      }
+    },
+    "vacuum": {
+      "vacuum": {
+        "default": "mdi:robot-vacuum"
       }
     }
   },

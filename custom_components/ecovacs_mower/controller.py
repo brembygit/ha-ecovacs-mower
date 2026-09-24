@@ -71,6 +71,12 @@ from .deebot_patch.map_messages import (
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
 )
+from .deebot_patch.vacuum import (
+    SUPPORTED_VACUUM_CLASSES,
+    patch_vacuum_device_info,
+    register_vacuum_bus,
+    verify_vacuum_capabilities,
+)
 from .fault import FaultLatch
 from .map import MowerMap
 
@@ -108,6 +114,7 @@ class EcovacsController:
         """Initialize controller."""
         self._hass = hass
         self._devices: list[Device] = []
+        self._verified_vacuum_dids: set[str] = set()
         self.maps: dict[str, MowerMap] = {}
         self.fault_latches: dict[str, FaultLatch] = {}
         self._map_stores: dict[str, Store[dict[str, Any]]] = {}
@@ -165,6 +172,8 @@ class EcovacsController:
             apply_deebot_patch()
             for class_ in SUPPORTED_CLASSES:
                 await patch_device_info(class_)
+            for class_ in SUPPORTED_VACUUM_CLASSES:
+                await patch_vacuum_device_info(class_)
 
             devices = await self._api_client.get_devices()
 
@@ -173,6 +182,26 @@ class EcovacsController:
                 device_class = info.api["class"]
                 if device_class in SUPPORTED_CLASSES:
                     verify_capabilities(info.static.capabilities, device_class)
+                elif device_class in SUPPORTED_VACUUM_CLASSES:
+                    # Caught here, unlike a mower's contract failure: refusing
+                    # the entry would take the mower on the same account down
+                    # with the vacuum. The vacuum instead gets no vacuum or
+                    # select entities — the platforms only build them for the
+                    # dids recorded below.
+                    try:
+                        verify_vacuum_capabilities(
+                            info.static.capabilities, device_class
+                        )
+                    except PatchContractError as ex:
+                        _LOGGER.warning(
+                            "%s. It gets no vacuum or select entities; the "
+                            "mowers on the account are unaffected. Report it "
+                            "at %s",
+                            ex,
+                            ISSUE_TRACKER_URL,
+                        )
+                    else:
+                        self._verified_vacuum_dids.add(info.api["did"])
                 elif info.static.capabilities.device_type is DeviceType.MOWER:
                     # Warning: all 25 MOWER classes in deebot-client 18.5.1
                     # carry the same CleanV2/GetCleanInfoV2 bugs, but
@@ -227,6 +256,10 @@ class EcovacsController:
                             # patched mower". Registering one would apply the
                             # gate to a device nothing else in here patched.
                             register_mower_bus(device.events)
+                        elif device.device_info["did"] in self._verified_vacuum_dids:
+                            # Same timing, same reason: the vacuum's patched
+                            # handlers only act on a bus marked here.
+                            register_vacuum_bus(device.events)
                         await device.initialize(mqtt)
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:
@@ -435,3 +468,17 @@ class EcovacsController:
     def devices(self) -> list[Device]:
         """Return devices."""
         return self._devices
+
+    @property
+    def vacuums(self) -> list[Device]:
+        """Return the vacuums whose patched capabilities were verified.
+
+        The vacuum and select platforms build from this rather than filtering
+        ``devices`` themselves: membership of SUPPORTED_VACUUM_CLASSES alone
+        says the patch was attempted, not that it took.
+        """
+        return [
+            device
+            for device in self._devices
+            if device.device_info["did"] in self._verified_vacuum_dids
+        ]

@@ -1,8 +1,9 @@
 """Ecovacs util functions.
 
 Forked from Home Assistant core (``homeassistant/components/ecovacs/util.py``).
-``get_options`` is still removed — it is only used by the select platform, which
-this integration does not have. ``get_supported_entities`` was restored in phase
+``get_options`` is still removed: the select platform added for vacuums builds
+its options from ``get_name_key`` directly. ``get_supported_entities`` was
+restored in phase
 2: the sensor, switch, number and button platforms use it to build their
 entities from ``EcovacsCapabilityEntityDescription``. ``get_name_key`` was
 restored in the same phase for the event platform, which maps ``CleanJobStatus``

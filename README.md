@@ -32,6 +32,43 @@ messages, and a session renewal that does not touch the password endpoint) and
 exposes a `lawn_mower` entity that reflects real state within seconds and
 responds to start / pause / dock.
 
+## T90 PRO OMNI support
+
+A DEEBOT T90 PRO OMNI (`twunby`) on the same Ecovacs account shares the
+controller's login and MQTT connection; it does not open a second one.
+
+Like any other device on the account, it gets the capability-backed entities of
+the sensor, switch, number, button and event platforms, such as battery, error,
+cleaning statistics, network, volume, TrueDetect, child lock, the locate-sound
+button and the last-job event. Those platforms were written for a mower, so
+some of these entities carry mower names, such as "Total mowed area". The
+mower-only platforms (`lawn_mower`, `binary_sensor`, `image`) and the mower
+patch layer do not touch it.
+
+On top of that it gets a `vacuum` entity (start, pause, stop, return to dock,
+locate, fan speed) and two selects, work mode and auto-empty frequency. These
+are built only for a vacuum class listed in `deebot_patch/vacuum.py` whose
+patched capabilities were verified at startup. The patch makes four changes:
+
+- the library starts a T90 clean with the legacy `clean` command, the Ecovacs
+  app only ever sends `clean_V2`, so the T90 is switched to it;
+- the work-mode select offers only the three modes the app offers, not mop only;
+- a robot stopped away from its dock reports `idle` for both itself and the
+  station, which the library turns into no state at all, so the vacuum stayed
+  `cleaning` until it docked; it now becomes `idle`;
+- the library's auto-empty setter sends only the frequency, which the firmware
+  refuses; the T90 gets a setter that sends `enable`, `frequency` and
+  `intensity` together, as the app does.
+
+If that verification fails, the T90 gets no vacuum or select entities and a
+warning is logged; the mowers on the account keep working.
+
+Every command these entities send was tested from Home Assistant against a T90
+on firmware 1.103.0, every value of every setting included. The app sends pause,
+resume and stop without the `content` that the library's `clean_V2` adds; the
+firmware accepts both. Room and zone cleaning, station actions, life spans and
+map selection are not exposed.
+
 ## Why a separate integration, instead of a fix upstream
 
 The underlying library, `deebot-client`, has around twenty open pull

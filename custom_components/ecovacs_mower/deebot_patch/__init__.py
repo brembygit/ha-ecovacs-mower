@@ -48,6 +48,7 @@ from .messages import (
     OnUwb,
 )
 from .state_precedence import register as register_mower_bus
+from .vacuum_messages import OnAutoEmptyVacuum, OnWorkStateVacuum
 from .zonal import MowArea
 
 __all__ = [
@@ -119,6 +120,10 @@ def apply() -> None:
         OnMapTrack,
         OnMI,
         OnSpecialContour,
+        # The patched vacuums' two. Both replace a library handler and behave
+        # exactly like it for any bus register_vacuum_bus() has not marked.
+        OnAutoEmptyVacuum,
+        OnWorkStateVacuum,
     ):
         MESSAGES[message.NAME] = message
         if MESSAGES.get(message.NAME) is not message:

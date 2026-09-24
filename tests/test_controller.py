@@ -11,6 +11,7 @@ import ast
 import inspect
 from pathlib import Path
 import textwrap
+from typing import Any
 
 import pytest
 
@@ -186,6 +187,9 @@ def test_patch_runs_before_get_devices() -> None:
 
     assert calls.index("patch_device_info") < calls.index("get_devices")
     assert calls.index("get_devices") < calls.index("verify_capabilities")
+    # The vacuum patch obeys the same invariant, for the same reason.
+    assert calls.index("patch_vacuum_device_info") < calls.index("get_devices")
+    assert calls.index("get_devices") < calls.index("verify_vacuum_capabilities")
 
 
 def test_verification_reads_static_device_info() -> None:
@@ -206,14 +210,18 @@ _VACUUM = "npwtuz"
 # deebot_patch at module level would pull in Home Assistant during collection,
 # which is exactly what this file's requires_ha marker exists to avoid.
 _SUPPORTED = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia", "xmp9ds")
+# The patched vacuum classes, spelled out for the same reason.
+_SUPPORTED_VACUUMS = ("twunby",)
+_T90 = "twunby"
 
 
-async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> None:
+async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Any:
     """Run ``initialize()`` with the devices *device_classes* coming from the API.
 
     Everything outside the verification loop is mocked: get_devices, the MQTT
     client and Device. What is tested is which branch a class ends up in, not
-    connectivity.
+    connectivity. The controller is returned torn down, so that its bookkeeping
+    can still be inspected.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -277,9 +285,11 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
             await controller.initialize()
     finally:
         await controller.teardown()
-        # initialize() seeds the cache globally; leave it as we found it.
-        for class_ in (*_SUPPORTED, *device_classes):
+        # initialize() seeds the cache globally; leave it as we found it. The
+        # vacuum classes are seeded on every run, whatever the account holds.
+        for class_ in (*_SUPPORTED, *_SUPPORTED_VACUUMS, *device_classes):
             _DEVICES.pop(class_, None)
+    return controller
 
 
 async def test_unsupported_mower_class_warns(hass, caplog) -> None:
@@ -333,6 +343,90 @@ async def test_supported_mowers_are_verified(hass, caplog) -> None:
     await _initialize_with(hass, _SUPPORTED)
 
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+async def test_an_unlisted_vacuum_gets_no_vacuum_entities(hass) -> None:
+    controller = await _initialize_with(hass, (_VACUUM,))
+
+    assert not controller._verified_vacuum_dids
+
+
+async def test_supported_vacuums_are_verified(hass, caplog) -> None:
+    """The T90 passes its verification and is recorded for the vacuum platforms."""
+    import logging
+
+    from custom_components.ecovacs_mower.deebot_patch.vacuum import (
+        SUPPORTED_VACUUM_CLASSES,
+    )
+
+    assert set(_SUPPORTED_VACUUMS) == set(SUPPORTED_VACUUM_CLASSES)
+
+    caplog.set_level(logging.DEBUG)
+    controller = await _initialize_with(hass, (*_SUPPORTED, _T90))
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert controller._verified_vacuum_dids == {f"did-{_T90}"}
+
+
+def test_the_vacuum_bus_is_registered_before_initialize() -> None:
+    """The patched handlers only act on a marked bus, so the mark comes first.
+
+    Source order, like test_patch_runs_before_get_devices: it catches a line
+    moved below device.initialize(), not a registration skipped at run time.
+    """
+    from custom_components.ecovacs_mower import controller
+
+    calls = _call_order(controller.EcovacsController.initialize)
+
+    assert calls.index("register_vacuum_bus") < calls.index("initialize")
+
+
+async def test_a_vacuum_contract_failure_spares_the_mower(hass, caplog) -> None:
+    """A vacuum the patch did not reach must not refuse the whole entry.
+
+    A mower's contract failure raises ConfigEntryError on purpose. A vacuum's
+    must not: the mower on the same account would go down with it. The vacuum
+    is left out of the vacuum platforms instead, and the warning names it.
+    """
+    import logging
+    from unittest.mock import AsyncMock, patch
+
+    from custom_components.ecovacs_mower.const import ISSUE_TRACKER_URL
+
+    caplog.set_level(logging.DEBUG)
+    with patch(
+        "custom_components.ecovacs_mower.controller.patch_vacuum_device_info",
+        AsyncMock(),
+    ):
+        controller = await _initialize_with(hass, ("77atlz", _T90))
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert _T90 in message
+    assert ISSUE_TRACKER_URL in message
+    assert not controller._verified_vacuum_dids
+    assert any(
+        r.getMessage() == "Controller initialize complete" for r in caplog.records
+    )
+
+
+def test_vacuums_lists_only_the_verified_devices() -> None:
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    def device(did: str) -> MagicMock:
+        mock = MagicMock()
+        mock.device_info = {"did": did}
+        return mock
+
+    mower, t90, unverified = device("m"), device("t"), device("u")
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._devices = [mower, t90, unverified]
+    controller._verified_vacuum_dids = {"t"}
+
+    assert controller.vacuums == [t90]
 
 
 def _forbidden_imports(path: Path) -> list[str]:

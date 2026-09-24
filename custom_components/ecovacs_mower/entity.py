@@ -124,7 +124,7 @@ class EcovacsEntity[CapabilityEntityT](Entity):
                 else ""
             )
             _LOGGER.warning(
-                "The mower did not confirm command %s%s. The reason is logged "
+                "The device did not confirm command %s%s. The reason is logged "
                 "by deebot_client; enable debug logging for this integration "
                 "to see the exchange",
                 command.NAME,
