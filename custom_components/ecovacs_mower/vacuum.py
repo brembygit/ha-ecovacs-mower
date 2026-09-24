@@ -40,7 +40,7 @@ from homeassistant.components.vacuum import (
     VacuumEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
@@ -222,9 +222,9 @@ class EcovacsVacuum(EcovacsEntity[Capabilities], StateVacuumEntity):
         try:
             parsed = [parse_segment_id(value) for value in segment_ids]
         except ValueError as ex:
-            raise HomeAssistantError(f"Not a room of this vacuum: {ex}") from ex
+            raise ServiceValidationError(f"Not a room of this vacuum: {ex}") from ex
         if not parsed:
-            raise HomeAssistantError("No room to clean.")
+            raise ServiceValidationError("No room to clean.")
 
         maps = {map_.id: map_ for map_ in self._built_maps()}
         map_ids = {map_id for map_id, _ in parsed}
@@ -232,19 +232,19 @@ class EcovacsVacuum(EcovacsEntity[Capabilities], StateVacuumEntity):
             names = ", ".join(
                 maps[map_id].name if map_id in maps else map_id for map_id in map_ids
             )
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"The rooms are on more than one floor ({names}); clean one floor "
                 "at a time."
             )
         (map_id,) = map_ids
         if (target := maps.get(map_id)) is None:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 "These rooms belong to a map the robot no longer has; map the "
                 "vacuum's rooms to areas again."
             )
         if not target.using:
             current = next((map_ for map_ in maps.values() if map_.using), None)
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"These rooms are on {target.name or 'another map'}, but the robot "
                 f"is on {current.name if current else 'another map'}. Move it there "
                 "and switch the map in the Ecovacs app first."
@@ -283,11 +283,11 @@ class EcovacsVacuum(EcovacsEntity[Capabilities], StateVacuumEntity):
                     matches = elsewhere[:1]
                 else:
                     known = ", ".join(sorted({s.name for s in segments}))
-                    raise HomeAssistantError(
+                    raise ServiceValidationError(
                         f"No room named {name!r} on the robot. Rooms: {known}."
                     )
             if len(matches) > 1:
-                raise HomeAssistantError(
+                raise ServiceValidationError(
                     f"More than one room is named {name!r}; rename one in the app."
                 )
             if matches[0].id not in segment_ids:
