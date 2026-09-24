@@ -313,7 +313,7 @@ async def test_a_segment_of_a_vanished_map_is_refused(t90_capabilities) -> None:
 def test_segment_ids_round_trip() -> None:
     from custom_components.ecovacs_mower.vacuum import parse_segment_id, segment_id
 
-    assert parse_segment_id(segment_id("1081_map", 7)) == ("1081_map", 7)
+    assert parse_segment_id(segment_id("floor_2", 7)) == ("floor_2", 7)
     for bad in ("nounderscore", "_3", "map_x"):
         with pytest.raises(ValueError):
             parse_segment_id(bad)
