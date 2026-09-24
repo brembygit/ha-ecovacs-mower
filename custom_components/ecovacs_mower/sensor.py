@@ -5,8 +5,12 @@ Everything related to vacuum stations (dust bag, mop drying) and the legacy
 XMPP-connected class (``EcovacsLegacy*``) has been removed: this integration only
 supports GOAT lawn mowers over MQTT, which have no station at all.
 
-``EcovacsActivitySensor`` and ``EcovacsMowingProgressSensor`` at the bottom are
-the two additions core has no counterpart for.
+``EcovacsActivitySensor`` and ``EcovacsMowingProgressSensor`` are the two
+mower additions core has no counterpart for. The verified vacuums get two
+sensors of their own at the bottom, station state and charge state, read from
+the raw work and charge states that ``deebot_patch.vacuum_messages`` publishes
+rather than from core's station entities, which rely on the library's
+``StationEvent`` (no ``spinDrying``).
 
 The activity sensor exists because HA's ``LawnMowerActivity`` enum cannot say
 *why* the mower stopped — see the comment above ``_STATE_TO_ACTIVITY``. The
@@ -75,6 +79,12 @@ from .deebot_patch.messages import (
     MowerJobEdgeEvent,
     MowerStatsEvent,
     MowerTriggerEvent,
+)
+from .deebot_patch.vacuum_messages import (
+    GetChargeStateVacuum,
+    GetWorkStateVacuum,
+    VacuumChargeEvent,
+    VacuumWorkStateEvent,
 )
 from .entity import (
     EcovacsCapabilityEntityDescription,
@@ -360,6 +370,10 @@ async def async_setup_entry(
         if device.device_info["class"] not in SUPPORTED_CLASSES:
             continue
         _async_setup_beacons(device, config_entry, async_add_entities)
+
+    for device in controller.vacuums:
+        entities.append(EcovacsVacuumStationStateSensor(device))
+        entities.append(EcovacsVacuumChargeStateSensor(device))
 
     async_add_entities(entities)
 
@@ -931,3 +945,101 @@ class EcovacsMowingProgressSensor(
                 event.phase,
                 event.trigger,
             )
+
+
+# stationState.state as a T90 (firmware 1.103.0) reports it, and the option
+# each one becomes. spinDrying is the one the library drops (gap S1).
+_STATION_STATES = {
+    "idle": "idle",
+    "goCharging": "go_charging",
+    "goEmptying": "go_emptying",
+    "emptying": "emptying",
+    "washing": "washing",
+    "drying": "drying",
+    "spinDrying": "spin_drying",
+}
+STATION_STATE_OPTIONS = [*_STATION_STATES.values(), "paused"]
+
+
+class EcovacsVacuumStationStateSensor(
+    EcovacsEntity[Any],
+    SensorEntity,
+):
+    """What the vacuum's station is doing, from ``onWorkState``.
+
+    The library's StationEvent has four values and no event at all for
+    ``spinDrying``; this reads the raw state instead. A station action paused
+    from the app (``paused 1`` while the station is busy) reads ``paused``.
+    """
+
+    entity_description = SensorEntityDescription(
+        key="station_state",
+        translation_key="station_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=STATION_STATE_OPTIONS,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to the raw work state."""
+        await super().async_added_to_hass()
+        self._subscribe(VacuumWorkStateEvent, self._on_work_state)
+        if self._device.events.get_last_event(VacuumWorkStateEvent) is None:
+            self.hass.async_create_task(self._execute_command(GetWorkStateVacuum()))
+
+    async def _on_work_state(self, event: VacuumWorkStateEvent) -> None:
+        option = _STATION_STATES.get(event.station or "")
+        if option is None:
+            _LOGGER.debug("Unknown station state from device: %s", event.station)
+            return
+        if event.paused and option != "idle":
+            option = "paused"
+        self._attr_native_value = option
+        self.async_write_ha_state()
+
+
+# isCharging as a T90 reports it. 2 shows for about a second as the robot
+# reaches the dock, before 1.
+_CHARGE_STATES = {0: "not_charging", 1: "charging", 2: "docking"}
+
+
+class EcovacsVacuumChargeStateSensor(
+    EcovacsEntity[Any],
+    SensorEntity,
+):
+    """Whether the vacuum is charging, from ``onChargeState``.
+
+    The library only turns ``isCharging 1`` into ``StateEvent(DOCKED)``; a
+    robot off its dock, or one arriving, is not reported at all.
+    """
+
+    entity_description = SensorEntityDescription(
+        key="charge_state",
+        translation_key="charge_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(_CHARGE_STATES.values()),
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to the raw charge state; ask for it once."""
+        await super().async_added_to_hass()
+        self._subscribe(VacuumChargeEvent, self._on_charge)
+        if self._device.events.get_last_event(VacuumChargeEvent) is None:
+            self.hass.async_create_task(self._execute_command(GetChargeStateVacuum()))
+
+    async def _on_charge(self, event: VacuumChargeEvent) -> None:
+        option = _CHARGE_STATES.get(event.is_charging)
+        if option is None:
+            _LOGGER.debug("Unknown charge state from device: %s", event.is_charging)
+            return
+        self._attr_native_value = option
+        self.async_write_ha_state()

@@ -11,6 +11,18 @@ T90 (firmware 1.103.0):
   changes nothing; the app always sends ``enable``, ``frequency`` and
   ``intensity`` together, and the library has no ``intensity`` at all.
 
+Three things the library does not give a T90 at all are added here as well:
+
+* the raw work and charge states, as ``VacuumWorkStateEvent`` and
+  ``VacuumChargeEvent``, for the station-state and charge-state sensors. The
+  library folds both into ``StateEvent`` / ``StationEvent`` and loses what the
+  sensors need (``spinDrying``, gap S1; the ``isCharging`` value itself);
+* the rooms of a map (``GetMapSetV2Rooms``). The library's parser expects 10
+  or 11 fields per room, the T90 sends 12, and it then asks for subsets the
+  T90 does not have; ``twunby`` has no map capability in 18.5.1 either;
+* a room clean in the app's shape (``CleanV2Rooms``), which the library's
+  ``CleanAreaV2`` does not produce.
+
 ``MESSAGES`` is global, so the handlers registered by ``apply()`` are reached
 for every JSON device on the account, and by core's ``ecovacs`` too when it
 runs in the same process. They behave exactly like the library's for any bus
@@ -24,21 +36,31 @@ device.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary, WeakSet
 
 from deebot_client.commands.json.auto_empty import GetAutoEmpty
-from deebot_client.commands.json.common import ExecuteCommand
+from deebot_client.commands.json.charge_state import GetChargeState
+from deebot_client.commands.json.common import (
+    ExecuteCommand,
+    JsonCommandWithMessageHandling,
+)
 from deebot_client.commands.json.work_state import GetWorkState
 from deebot_client.events import StateEvent
 from deebot_client.events.auto_empty import AutoEmptyEvent, Frequency
-from deebot_client.message import HandlingResult, HandlingState
+from deebot_client.events.base import Event
+from deebot_client.message import HandlingResult, HandlingState, MessageBodyDataDict
 from deebot_client.messages.json.auto_empty import OnAutoEmpty
 from deebot_client.messages.json.work_state import OnWorkState
 from deebot_client.models import State
+from deebot_client.rs.util import decompress_base64_data
 from deebot_client.util import get_enum
+import orjson
+
+from .messages import OnChargeState
 
 if TYPE_CHECKING:
     from deebot_client.authentication import Authenticator
@@ -49,6 +71,45 @@ _LOGGER = logging.getLogger(__name__)
 
 _VACUUM_BUSES: WeakSet[EventBus] = WeakSet()
 _AUTO_EMPTY_INTENSITY: WeakKeyDictionary[EventBus, int] = WeakKeyDictionary()
+_ROOMS: WeakKeyDictionary[EventBus, dict[str, tuple[VacuumRoom, ...]]] = (
+    WeakKeyDictionary()
+)
+
+
+@dataclass(frozen=True)
+class VacuumWorkStateEvent(Event):
+    """The robot and station states exactly as ``onWorkState`` reports them."""
+
+    robot: str | None
+    station: str | None
+    paused: bool
+
+
+@dataclass(frozen=True)
+class VacuumChargeEvent(Event):
+    """``isCharging`` exactly as ``onChargeState`` reports it.
+
+    0 off the charger, 1 charging; 2 is reported for about a second as the
+    robot reaches the dock, before 1.
+    """
+
+    is_charging: int
+
+
+@dataclass(frozen=True)
+class VacuumRoom:
+    """One room of a map: the id the robot cleans by, and its name."""
+
+    id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class VacuumRoomsEvent(Event):
+    """The rooms of one map, in the order the robot lists them."""
+
+    map_id: str
+    rooms: tuple[VacuumRoom, ...]
 
 
 def register_vacuum_bus(event_bus: EventBus) -> None:
@@ -71,10 +132,16 @@ def auto_empty_intensity_for(event_bus: EventBus) -> int | None:
     return _AUTO_EMPTY_INTENSITY.get(event_bus)
 
 
+def rooms_for(event_bus: EventBus) -> dict[str, tuple[VacuumRoom, ...]]:
+    """The rooms last reported on *event_bus*, by map id."""
+    return dict(_ROOMS.get(event_bus, {}))
+
+
 def reset() -> None:
     """Forget every registration and record. Tests only."""
     _VACUUM_BUSES.clear()
     _AUTO_EMPTY_INTENSITY.clear()
+    _ROOMS.clear()
 
 
 class OnWorkStateVacuum(OnWorkState):
@@ -97,13 +164,16 @@ class OnWorkStateVacuum(OnWorkState):
     ) -> HandlingResult:
         """Handle message->body->data and notify the correct event subscribers."""
         result = super()._handle_body_data_dict(event_bus, data)
-        if (
-            is_vacuum_bus(event_bus)
-            and data.get("paused") != 1
-            and (data.get("robotState") or {}).get("state") == "idle"
-            and (data.get("stationState") or {}).get("state") == "idle"
-        ):
+        if not is_vacuum_bus(event_bus):
+            return result
+        robot = (data.get("robotState") or {}).get("state")
+        station = (data.get("stationState") or {}).get("state")
+        paused = data.get("paused") == 1
+        if not paused and robot == "idle" and station == "idle":
             event_bus.notify(StateEvent(State.IDLE))
+        # Published whatever the library made of it, spinDrying included: the
+        # station-state sensor reads this, not StationEvent.
+        event_bus.notify(VacuumWorkStateEvent(robot, station, paused))
         return result
 
 
@@ -256,3 +326,117 @@ class CleanV2AppStart(ExecuteCommand):
             },
             "body": {"data": self._args},
         }
+
+
+def _note_charge(event_bus: EventBus, body: dict[str, Any]) -> None:
+    """Publish ``isCharging`` for a patched vacuum, if the body carries one."""
+    data = body.get("data")
+    if (
+        is_vacuum_bus(event_bus)
+        and isinstance(data, dict)
+        and isinstance(is_charging := data.get("isCharging"), int)
+    ):
+        event_bus.notify(VacuumChargeEvent(is_charging))
+
+
+class OnChargeStateVacuum(OnChargeState):
+    """``onChargeState`` that also publishes the raw ``isCharging``.
+
+    Replaces the mowers' ``OnChargeState`` in ``MESSAGES`` and runs it first,
+    so a mower's push is handled exactly as before.
+    """
+
+    @classmethod
+    def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
+        """Handle message->body."""
+        result = super()._handle_body(event_bus, body)
+        _note_charge(event_bus, body)
+        return result
+
+
+class GetChargeStateVacuum(GetChargeState):
+    """``getChargeState`` that also publishes the raw ``isCharging``.
+
+    Sent by the charge-state sensor when it is added: the push only arrives
+    when the value changes.
+    """
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        result = super()._handle_body_data_dict(event_bus, data)
+        _note_charge(event_bus, {"data": data})
+        return result
+
+
+class GetMapSetV2Rooms(JsonCommandWithMessageHandling, MessageBodyDataDict):
+    """The rooms of one map, as the app asks for them.
+
+    The app sends ``{"mid": <map id>, "type": "ar", "count": 15, "start": 0}``.
+    The answer's ``subsets`` is base64 zstd JSON, one row per room; on a T90
+    (firmware 1.103.0) a row has 12 fields and starts ``[id, name, …]``. Room
+    ids are per map and not dense.
+
+    The rooms are recorded before they are published, so a caller that awaited
+    this command can read them with ``rooms_for()`` at once.
+    """
+
+    NAME = "getMapSet_V2"
+
+    def __init__(self, map_id: str) -> None:
+        super().__init__({"mid": map_id, "type": "ar", "count": 15, "start": 0})
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        map_id = data.get("mid")
+        if data.get("type") != "ar" or not isinstance(map_id, str):
+            return HandlingResult.analyse()
+        try:
+            rows = orjson.loads(decompress_base64_data(data["subsets"]).decode())
+        except (KeyError, TypeError, ValueError, orjson.JSONDecodeError):
+            _LOGGER.debug("Could not decode the rooms of map %s", map_id, exc_info=True)
+            return HandlingResult.analyse()
+
+        rooms: list[VacuumRoom] = []
+        for row in rows:
+            try:
+                room_id = int(row[0])
+            except (IndexError, TypeError, ValueError):
+                continue
+            name = str(row[1]).strip() if len(row) > 1 else ""
+            rooms.append(VacuumRoom(room_id, name or f"Room {room_id}"))
+        if len(rooms) >= 15:
+            _LOGGER.debug(
+                "Map %s answered 15 rooms, the most one request asks for", map_id
+            )
+
+        _ROOMS.setdefault(event_bus, {})[map_id] = tuple(rooms)
+        event_bus.notify(VacuumRoomsEvent(map_id, tuple(rooms)))
+        return HandlingResult.success()
+
+
+class CleanV2Rooms(ExecuteCommand):
+    """A clean of the given rooms, in the app's shape.
+
+    ``{"act": "start", "content": {"type": "freeClean", "value": "1,4;1,3"}}``:
+    one ``1,<room id>`` pair per room, joined by ``;``, in the order given
+    (the app keeps the order the rooms were tapped in). The library's
+    ``CleanAreaV2`` joins the ids with commas behind a single count instead.
+
+    Not a CleanV2: that class turns a start on a paused robot into a resume.
+    """
+
+    NAME = "clean_V2"
+
+    def __init__(self, room_ids: list[int]) -> None:
+        if not room_ids:
+            raise ValueError("at least one room is needed")
+        value = ";".join(f"1,{room_id}" for room_id in room_ids)
+        super().__init__(
+            {"act": "start", "content": {"type": "freeClean", "value": value}}
+        )

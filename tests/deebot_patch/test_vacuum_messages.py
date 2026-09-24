@@ -16,6 +16,15 @@ from deebot_client.models import State
 from custom_components.ecovacs_mower.deebot_patch import apply
 from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
     CleanV2AppStart,
+    CleanV2Rooms,
+    GetChargeStateVacuum,
+    GetMapSetV2Rooms,
+    OnChargeStateVacuum,
+    VacuumChargeEvent,
+    VacuumRoom,
+    VacuumRoomsEvent,
+    VacuumWorkStateEvent,
+    rooms_for,
     GetAutoEmptyVacuum,
     GetWorkStateVacuum,
     OnAutoEmptyVacuum,
@@ -304,3 +313,189 @@ async def test_the_app_start_is_sent_as_a_start_even_when_paused() -> None:
 
     assert result.state is HandlingState.SUCCESS
     assert [data["act"] for data in sent] == ["start"]
+
+
+
+# --- raw work and charge states --------------------------------------------
+
+
+def _last(bus: EventBus, event_type):
+    return bus.get_last_event(event_type)
+
+
+def test_the_raw_work_state_is_published_for_a_vacuum() -> None:
+    bus = _vacuum_bus()
+
+    OnWorkStateVacuum.handle(bus, _work_state("cleaning", "washing"))
+
+    assert _last(bus, VacuumWorkStateEvent) == VacuumWorkStateEvent(
+        "cleaning", "washing", False
+    )
+
+
+def test_spin_drying_is_published_though_the_library_drops_it() -> None:
+    # Gap S1: the library's table has no spinDrying and publishes nothing.
+    bus = _vacuum_bus()
+
+    OnWorkStateVacuum.handle(bus, _work_state("idle", "spinDrying"))
+
+    assert _last(bus, VacuumWorkStateEvent) == VacuumWorkStateEvent(
+        "idle", "spinDrying", False
+    )
+
+
+def test_a_paused_station_action_is_published_as_paused() -> None:
+    bus = _vacuum_bus()
+
+    OnWorkStateVacuum.handle(bus, _work_state("idle", "washing", paused=1))
+
+    assert _last(bus, VacuumWorkStateEvent).paused is True
+
+
+def test_no_raw_work_state_for_an_unregistered_bus() -> None:
+    bus = _bus()
+
+    OnWorkStateVacuum.handle(bus, _work_state("cleaning", "idle"))
+
+    assert _last(bus, VacuumWorkStateEvent) is None
+
+
+def _charge(is_charging: int) -> dict:
+    return {"body": {"data": {"chargeRate": 0, "isCharging": is_charging, "mode": "autoEmpty"}}}
+
+
+@pytest.mark.parametrize("value", [0, 1, 2])
+def test_the_raw_charge_state_is_published_for_a_vacuum(value: int) -> None:
+    bus = _vacuum_bus()
+
+    OnChargeStateVacuum.handle(bus, _charge(value))
+
+    assert _last(bus, VacuumChargeEvent) == VacuumChargeEvent(value)
+
+
+def test_the_charge_push_still_docks_the_robot() -> None:
+    # What the mowers' OnChargeState did before, for every bus.
+    bus = _vacuum_bus()
+
+    OnChargeStateVacuum.handle(bus, _charge(1))
+
+    assert _last(bus, StateEvent) == StateEvent(State.DOCKED)
+
+
+def test_no_raw_charge_state_for_an_unregistered_bus() -> None:
+    bus = _bus()
+
+    OnChargeStateVacuum.handle(bus, _charge(1))
+
+    assert _last(bus, VacuumChargeEvent) is None
+    assert _last(bus, StateEvent) == StateEvent(State.DOCKED)
+
+
+def test_the_charge_answer_publishes_the_raw_state() -> None:
+    bus = _vacuum_bus()
+
+    GetChargeStateVacuum.handle(bus, {"body": {"code": 0, "data": {"isCharging": 0}}})
+
+    assert _last(bus, VacuumChargeEvent) == VacuumChargeEvent(0)
+
+
+def test_the_vacuum_charge_handler_is_the_registered_one() -> None:
+    apply()
+
+    assert MESSAGES["onChargeState"] is OnChargeStateVacuum
+
+
+# --- rooms -----------------------------------------------------------------
+
+
+def _rooms_answer(rows: list, map_id: str = "map-a", type_: str = "ar") -> dict:
+    """A getMapSet_V2 answer: base64 zstd JSON rows, as a T90 sends them."""
+    import base64
+    import json
+    from compression import zstd
+
+    subsets = base64.b64encode(zstd.compress(json.dumps(rows).encode())).decode()
+    return {
+        "body": {
+            "code": 0,
+            "data": {"mid": map_id, "msid": "1", "type": type_, "subsets": subsets},
+        }
+    }
+
+
+# Invented rooms in the T90's 12-field row shape.
+_ROWS = [
+    ["1", "Hall", 0, "3-4", 0, 100, 200, "1-0-2", " ", "2-0", 0, 0],
+    ["3", "Kitchen", 0, "1", 0, 300, 400, "1-0-2", " ", "0", 0, 0],
+    ["4", "", 0, "1", 0, 500, 600, "1-0-2", " ", "0", 0, 0],
+]
+
+
+def test_the_rooms_request_is_the_apps() -> None:
+    assert GetMapSetV2Rooms("map-a")._args == {
+        "mid": "map-a",
+        "type": "ar",
+        "count": 15,
+        "start": 0,
+    }
+    assert GetMapSetV2Rooms.NAME == "getMapSet_V2"
+
+
+def test_the_rooms_of_a_map_are_decoded_and_recorded() -> None:
+    bus = _vacuum_bus()
+
+    result = GetMapSetV2Rooms.handle(bus, _rooms_answer(_ROWS))
+
+    assert result.state is HandlingState.SUCCESS
+    expected = (
+        VacuumRoom(1, "Hall"),
+        VacuumRoom(3, "Kitchen"),
+        VacuumRoom(4, "Room 4"),  # an unnamed room gets its id
+    )
+    assert rooms_for(bus) == {"map-a": expected}
+    assert _last(bus, VacuumRoomsEvent) == VacuumRoomsEvent("map-a", expected)
+
+
+def test_rooms_are_kept_per_map() -> None:
+    bus = _vacuum_bus()
+
+    GetMapSetV2Rooms.handle(bus, _rooms_answer(_ROWS[:1], "map-a"))
+    GetMapSetV2Rooms.handle(bus, _rooms_answer(_ROWS[1:2], "map-b"))
+
+    assert set(rooms_for(bus)) == {"map-a", "map-b"}
+
+
+def test_another_map_set_type_is_not_taken_for_rooms() -> None:
+    bus = _vacuum_bus()
+
+    result = GetMapSetV2Rooms.handle(bus, _rooms_answer([], type_="vw"))
+
+    assert result.state is HandlingState.ANALYSE_LOGGED
+    assert rooms_for(bus) == {}
+
+
+def test_an_undecodable_answer_is_not_taken_for_rooms() -> None:
+    bus = _vacuum_bus()
+    answer = {"body": {"code": 0, "data": {"mid": "m", "type": "ar", "subsets": "!!"}}}
+
+    result = GetMapSetV2Rooms.handle(bus, answer)
+
+    assert result.state is HandlingState.ANALYSE_LOGGED
+    assert rooms_for(bus) == {}
+
+
+# --- room clean ------------------------------------------------------------
+
+
+def test_a_room_clean_is_the_apps_free_clean() -> None:
+    # PROTOCOL.md: rooms 4, 3, 1 tapped in that order.
+    assert CleanV2Rooms([4, 3, 1])._args == {
+        "act": "start",
+        "content": {"type": "freeClean", "value": "1,4;1,3;1,1"},
+    }
+    assert CleanV2Rooms.NAME == "clean_V2"
+
+
+def test_a_room_clean_needs_a_room() -> None:
+    with pytest.raises(ValueError):
+        CleanV2Rooms([])

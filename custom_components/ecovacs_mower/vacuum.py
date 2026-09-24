@@ -4,6 +4,16 @@ This platform is deliberately separate from ``lawn_mower``.  The controller
 owns one authenticated MQTT connection for every device on the account, and
 only the vacuums whose patched capabilities it verified become entities here —
 see ``EcovacsController.vacuums`` and ``deebot_patch/vacuum.py``.
+
+Cleaning by area (``VacuumEntityFeature.CLEAN_AREA``): the segments are the
+rooms of every built map, grouped by the map's name, so each floor's rooms
+stay together in the area mapping dialog. They come from the robot, not the
+library: ``getCachedMapInfo`` for the maps, ``GetMapSetV2Rooms`` for each
+map's rooms. A segment id is ``<map id>_<room id>``, because room ids repeat
+across maps. A clean sends the rooms of one map in the app's ``freeClean``
+shape (``CleanV2Rooms``), and only for the map the robot is on: switching
+floors is left to the user, since a map switch from here could strand the
+robot on the wrong floor.
 """
 
 from __future__ import annotations
@@ -12,20 +22,30 @@ import logging
 from typing import Any, override
 
 from deebot_client.capabilities import Capabilities
+from deebot_client.commands.json.map import GetCachedMapInfo
 from deebot_client.device import Device
 from deebot_client.events import FanSpeedEvent, StateEvent
+from deebot_client.events.map import CachedMapInfoEvent, Map
 from deebot_client.models import CleanAction, State
 
 from homeassistant.components.vacuum import (
+    Segment,
     StateVacuumEntity,
     StateVacuumEntityDescription,
     VacuumActivity,
     VacuumEntityFeature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
+from .deebot_patch.vacuum_messages import (
+    CleanV2Rooms,
+    GetMapSetV2Rooms,
+    VacuumRoomsEvent,
+    rooms_for,
+)
 from .entity import EcovacsEntity
 from .util import get_name_key
 
@@ -39,6 +59,19 @@ _STATE_TO_VACUUM_STATE = {
     State.ERROR: VacuumActivity.ERROR,
     State.PAUSED: VacuumActivity.PAUSED,
 }
+
+
+def segment_id(map_id: str, room_id: int) -> str:
+    """The segment id of a room: room ids repeat across maps, map ids do not."""
+    return f"{map_id}_{room_id}"
+
+
+def parse_segment_id(value: str) -> tuple[str, int]:
+    """Split a segment id back into map id and room id; ValueError if it is not one."""
+    map_id, separator, room_id = value.rpartition("_")
+    if not separator or not map_id:
+        raise ValueError(value)
+    return map_id, int(room_id)
 
 
 async def async_setup_entry(
@@ -68,6 +101,7 @@ class EcovacsVacuum(EcovacsEntity[Capabilities], StateVacuumEntity):
         | VacuumEntityFeature.RETURN_HOME
         | VacuumEntityFeature.LOCATE
         | VacuumEntityFeature.START
+        | VacuumEntityFeature.CLEAN_AREA
     )
 
     def __init__(self, device: Device) -> None:
@@ -101,6 +135,118 @@ class EcovacsVacuum(EcovacsEntity[Capabilities], StateVacuumEntity):
                 self.async_write_ha_state()
 
             self._subscribe(self._capability.fan_speed.event, on_fan_speed)
+
+        async def on_maps(_event: CachedMapInfoEvent) -> None:
+            # Every time the map list changes (EventBus drops an unchanged
+            # one): a renamed or re-split map changes its rooms too.
+            await self._async_refresh_rooms()
+
+        async def on_rooms(_event: VacuumRoomsEvent) -> None:
+            self._async_check_segments()
+
+        self._subscribe(CachedMapInfoEvent, on_maps)
+        self._subscribe(VacuumRoomsEvent, on_rooms)
+        # twunby has no map capability, so subscribing requests nothing: ask
+        # once here. The answer's CachedMapInfoEvent then fetches the rooms.
+        self.hass.async_create_task(self._execute_command(GetCachedMapInfo()))
+
+    def _built_maps(self) -> list[Map]:
+        """The robot's built maps, the one it is on first."""
+        event = self._device.events.get_last_event(CachedMapInfoEvent)
+        if event is None:
+            return []
+        return sorted(
+            (map_ for map_ in event.maps if map_.built),
+            key=lambda map_: (not map_.using, map_.name, map_.id),
+        )
+
+    async def _async_refresh_rooms(self) -> None:
+        """Ask for the rooms of every built map."""
+        for map_ in self._built_maps():
+            await self._execute_command(GetMapSetV2Rooms(map_.id))
+
+    def _current_segments(self) -> dict[str, Segment] | None:
+        """The segments, or None while a built map's rooms are still unknown."""
+        maps = self._built_maps()
+        rooms = rooms_for(self._device.events)
+        if not maps or any(map_.id not in rooms for map_ in maps):
+            return None
+        return {
+            segment.id: segment
+            for map_ in maps
+            for segment in (
+                Segment(
+                    id=segment_id(map_.id, room.id),
+                    name=room.name,
+                    group=map_.name or None,
+                )
+                for room in rooms[map_.id]
+            )
+        }
+
+    @callback
+    def _async_check_segments(self) -> None:
+        """Raise HA's repair issue when the rooms differ from the mapped ones."""
+        if (
+            self.registry_entry is not None
+            and (last_seen := self.last_seen_segments) is not None
+            and (current := self._current_segments())
+            and current != {segment.id: segment for segment in last_seen}
+        ):
+            _LOGGER.debug(
+                "Vacuum rooms changed: last seen %s, now %s", last_seen, current
+            )
+            self.async_create_segments_issue()
+
+    @override
+    async def async_get_segments(self) -> list[Segment]:
+        """The rooms of every built map, grouped by map."""
+        if (segments := self._current_segments()) is None:
+            await self._execute_command(GetCachedMapInfo())
+            await self._async_refresh_rooms()
+            segments = self._current_segments()
+        if segments is None:
+            raise HomeAssistantError(
+                "The robot has not reported its maps and rooms yet; try again in a "
+                "moment."
+            )
+        return list(segments.values())
+
+    @override
+    async def async_clean_segments(self, segment_ids: list[str], **kwargs: Any) -> None:
+        """Clean the given rooms, all on the map the robot is on."""
+        try:
+            parsed = [parse_segment_id(value) for value in segment_ids]
+        except ValueError as ex:
+            raise HomeAssistantError(f"Not a room of this vacuum: {ex}") from ex
+        if not parsed:
+            raise HomeAssistantError("No room to clean.")
+
+        maps = {map_.id: map_ for map_ in self._built_maps()}
+        map_ids = {map_id for map_id, _ in parsed}
+        if len(map_ids) > 1:
+            names = ", ".join(
+                maps[map_id].name if map_id in maps else map_id for map_id in map_ids
+            )
+            raise HomeAssistantError(
+                f"The rooms are on more than one floor ({names}); clean one floor "
+                "at a time."
+            )
+        (map_id,) = map_ids
+        if (target := maps.get(map_id)) is None:
+            raise HomeAssistantError(
+                "These rooms belong to a map the robot no longer has; map the "
+                "vacuum's rooms to areas again."
+            )
+        if not target.using:
+            current = next((map_ for map_ in maps.values() if map_.using), None)
+            raise HomeAssistantError(
+                f"These rooms are on {target.name or 'another map'}, but the robot "
+                f"is on {current.name if current else 'another map'}. Move it there "
+                "and switch the map in the Ecovacs app first."
+            )
+
+        await self._execute_command(CleanV2Rooms([room_id for _, room_id in parsed]))
 
     async def _clean_command(self, action: CleanAction) -> None:
         """Send a capability-provided vacuum cleaning command."""

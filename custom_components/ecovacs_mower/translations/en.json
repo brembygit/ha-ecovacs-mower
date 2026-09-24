@@ -108,6 +108,27 @@
       }
     },
     "sensor": {
+      "charge_state": {
+        "name": "Charge state",
+        "state": {
+          "not_charging": "Not charging",
+          "charging": "Charging",
+          "docking": "Docking"
+        }
+      },
+      "station_state": {
+        "name": "Station state",
+        "state": {
+          "idle": "Idle",
+          "go_charging": "Robot returning",
+          "go_emptying": "Robot returning to empty",
+          "emptying": "Emptying dustbin",
+          "washing": "Washing mop",
+          "drying": "Drying mop",
+          "spin_drying": "Spin-drying mop",
+          "paused": "Paused"
+        }
+      },
       "activity": {
         "name": "Activity",
         "state": {

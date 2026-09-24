@@ -1,5 +1,7 @@
 """The sensor set must mirror what a GOAT actually has."""
 
+import pytest
+
 from tests import requires_ha
 
 pytestmark = requires_ha
@@ -168,6 +170,8 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         EcovacsActivitySensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
+        EcovacsVacuumChargeStateSensor,
+        EcovacsVacuumStationStateSensor,
         beacon_entity_description,
     )
 
@@ -181,6 +185,8 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
+        EcovacsVacuumStationStateSensor.entity_description,
+        EcovacsVacuumChargeStateSensor.entity_description,
         # Built per beacon at runtime, so there is no tuple to splat. Every
         # serial yields the same translation key, which is what these three
         # tests check.
@@ -1446,3 +1452,93 @@ async def test_a_charge_break_resume_is_not_a_new_job() -> None:
     await sensor._on_state(_state_event(State.CLEANING))
 
     assert sensor._attr_native_value == 55
+
+
+
+@pytest.mark.parametrize(
+    "cls_name", ["EcovacsVacuumStationStateSensor", "EcovacsVacuumChargeStateSensor"]
+)
+def test_every_vacuum_sensor_option_has_a_translation(cls_name: str) -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower import sensor
+
+    description = getattr(sensor, cls_name).entity_description
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+    entry = strings["entity"]["sensor"][description.translation_key]
+
+    assert set(entry["state"]) == set(description.options)
+    assert description.translation_key in icons["entity"]["sensor"]
+    assert set(
+        icons["entity"]["sensor"][description.translation_key].get("state", {})
+    ) <= set(description.options)
+
+
+def _vacuum_sensor(cls_name: str):
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower import sensor
+
+    device = MagicMock()
+    device.device_info = {"did": "did-t90", "class": "twunby"}
+    entity = getattr(sensor, cls_name)(device)
+    entity.async_write_ha_state = MagicMock()
+    return entity
+
+
+@pytest.mark.parametrize(
+    ("station", "paused", "expected"),
+    [
+        ("idle", False, "idle"),
+        ("goCharging", False, "go_charging"),
+        ("emptying", False, "emptying"),
+        ("washing", False, "washing"),
+        ("drying", False, "drying"),
+        ("spinDrying", False, "spin_drying"),
+        ("washing", True, "paused"),
+        ("idle", True, "idle"),
+    ],
+)
+async def test_the_station_state_follows_the_raw_work_state(
+    station: str, paused: bool, expected: str
+) -> None:
+    from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+        VacuumWorkStateEvent,
+    )
+
+    entity = _vacuum_sensor("EcovacsVacuumStationStateSensor")
+
+    await entity._on_work_state(VacuumWorkStateEvent("idle", station, paused))
+
+    assert entity.native_value == expected
+
+
+async def test_an_unknown_station_state_keeps_the_last_value() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+        VacuumWorkStateEvent,
+    )
+
+    entity = _vacuum_sensor("EcovacsVacuumStationStateSensor")
+    await entity._on_work_state(VacuumWorkStateEvent("idle", "emptying", False))
+
+    await entity._on_work_state(VacuumWorkStateEvent("idle", "somethingNew", False))
+
+    assert entity.native_value == "emptying"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), [(0, "not_charging"), (1, "charging"), (2, "docking")]
+)
+async def test_the_charge_state_follows_is_charging(value: int, expected: str) -> None:
+    from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+        VacuumChargeEvent,
+    )
+
+    entity = _vacuum_sensor("EcovacsVacuumChargeStateSensor")
+
+    await entity._on_charge(VacuumChargeEvent(value))
+
+    assert entity.native_value == expected

@@ -88,6 +88,22 @@
       }
     },
     "sensor": {
+      "charge_state": {
+        "default": "mdi:battery-charging",
+        "state": {
+          "not_charging": "mdi:battery"
+        }
+      },
+      "station_state": {
+        "default": "mdi:home-outline",
+        "state": {
+          "emptying": "mdi:delete-empty",
+          "washing": "mdi:water",
+          "drying": "mdi:fan",
+          "spin_drying": "mdi:rotate-right",
+          "paused": "mdi:pause-circle-outline"
+        }
+      },
       "activity": {
         "default": "mdi:robot-mower-outline",
         "state": {

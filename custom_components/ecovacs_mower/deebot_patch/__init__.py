@@ -48,7 +48,11 @@ from .messages import (
     OnUwb,
 )
 from .state_precedence import register as register_mower_bus
-from .vacuum_messages import OnAutoEmptyVacuum, OnWorkStateVacuum
+from .vacuum_messages import (
+    OnAutoEmptyVacuum,
+    OnChargeStateVacuum,
+    OnWorkStateVacuum,
+)
 from .zonal import MowArea
 
 __all__ = [
@@ -120,9 +124,11 @@ def apply() -> None:
         OnMapTrack,
         OnMI,
         OnSpecialContour,
-        # The patched vacuums' two. Both replace a library handler and behave
+        # The patched vacuums' three. Each replaces a handler (the library's, or
+        # OnChargeState above, which is why it comes after it) and behaves
         # exactly like it for any bus register_vacuum_bus() has not marked.
         OnAutoEmptyVacuum,
+        OnChargeStateVacuum,
         OnWorkStateVacuum,
     ):
         MESSAGES[message.NAME] = message

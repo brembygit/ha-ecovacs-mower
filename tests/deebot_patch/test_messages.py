@@ -854,8 +854,16 @@ async def test_the_pushed_charge_state_sets_the_dock_too() -> None:
 
 
 async def test_on_charge_state_is_registered_and_reachable() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+        OnChargeStateVacuum,
+    )
+
     apply()
-    assert get_message("onChargeState", _static_device_info()) is OnChargeState
+    # The vacuums' subclass is what ends up registered; it runs this class's
+    # handling first, so a mower's push is handled exactly as before.
+    handler = get_message("onChargeState", _static_device_info())
+    assert handler is OnChargeStateVacuum
+    assert issubclass(handler, OnChargeState)
 
 
 async def test_docking_sets_the_dock_and_go_charging_clears_it() -> None:
