@@ -192,6 +192,9 @@
     }
   },
   "services": {
+    "clean_rooms": {
+      "service": "mdi:floor-plan"
+    },
     "mow_area": {
       "service": "mdi:map-marker-path"
     }

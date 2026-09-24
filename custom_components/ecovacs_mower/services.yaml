@@ -11,3 +11,16 @@ mow_area:
         text:
           multiple: true
           type: number
+
+clean_rooms:
+  target:
+    entity:
+      domain: vacuum
+      integration: ecovacs_mower
+  fields:
+    rooms:
+      required: true
+      example: '["Kitchen", "Hall"]'
+      selector:
+        text:
+          multiple: true

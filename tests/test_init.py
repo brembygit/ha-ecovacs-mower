@@ -25,14 +25,18 @@ async def test_async_setup_registers_mow_area_entity_service() -> None:
     ) as register:
         assert await async_setup(hass, {})
 
-    register.assert_called_once()
-    kwargs = register.call_args.kwargs
-    assert kwargs["entity_domain"] == "lawn_mower"
-    assert kwargs["func"] == "async_mow_area"
+    by_name = {call.args[2]: call.kwargs for call in register.call_args_list}
+    assert set(by_name) == {"mow_area", "clean_rooms"}
+    assert by_name["mow_area"]["entity_domain"] == "lawn_mower"
+    assert by_name["mow_area"]["func"] == "async_mow_area"
+    assert by_name["clean_rooms"]["entity_domain"] == "vacuum"
+    assert by_name["clean_rooms"]["func"] == "async_clean_rooms"
 
     from custom_components.ecovacs_mower.lawn_mower import EcovacsMower
+    from custom_components.ecovacs_mower.vacuum import EcovacsVacuum
 
-    assert hasattr(EcovacsMower, kwargs["func"])
+    assert hasattr(EcovacsMower, by_name["mow_area"]["func"])
+    assert hasattr(EcovacsVacuum, by_name["clean_rooms"]["func"])
 
 
 async def test_mow_area_service_reaches_registered_entity(hass) -> None:
@@ -170,3 +174,25 @@ async def test_account_credentials_change_persists_to_the_entry() -> None:
     hass.config_entries.async_update_entry.assert_called_once_with(
         entry, data={"existing": "value", CONF_CREDENTIALS: account}
     )
+
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Kitchen", ["Kitchen"]),
+        (["Kitchen", " Hall "], ["Kitchen", "Hall"]),
+    ],
+)
+def test_rooms_schema_accepts_names(value, expected) -> None:
+    from custom_components.ecovacs_mower import ROOMS_SCHEMA
+
+    assert ROOMS_SCHEMA(value) == expected
+
+
+@pytest.mark.parametrize("value", [[], [""], ["  "]])
+def test_rooms_schema_rejects_empty(value) -> None:
+    from custom_components.ecovacs_mower import ROOMS_SCHEMA
+
+    with pytest.raises(vol.Invalid):
+        ROOMS_SCHEMA(value)

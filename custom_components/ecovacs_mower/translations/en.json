@@ -184,6 +184,16 @@
     }
   },
   "services": {
+    "clean_rooms": {
+      "name": "Clean rooms",
+      "description": "Clean rooms of the map the vacuum is on, by their names in the Ecovacs app, in the order given.",
+      "fields": {
+        "rooms": {
+          "name": "Rooms",
+          "description": "Room names as the Ecovacs app shows them, in cleaning order."
+        }
+      }
+    },
     "mow_area": {
       "name": "Mow area",
       "description": "Start mowing one or more saved mowing areas.",

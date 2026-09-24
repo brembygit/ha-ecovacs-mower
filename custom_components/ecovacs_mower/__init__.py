@@ -48,6 +48,13 @@ AREA_IDS_SCHEMA = vol.All(
 )
 
 
+ROOMS_SCHEMA = vol.All(
+    cv.ensure_list,
+    vol.Length(min=1),
+    [vol.All(cv.string, vol.Strip, vol.Length(min=1))],
+)
+
+
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
@@ -60,6 +67,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         entity_domain="lawn_mower",
         schema={vol.Required("area_ids"): AREA_IDS_SCHEMA},
         func="async_mow_area",
+    )
+    # The rooms as the Ecovacs app names them, in the order to clean them,
+    # without mapping them to Home Assistant areas first (vacuum.clean_area).
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        "clean_rooms",
+        entity_domain="vacuum",
+        schema={vol.Required("rooms"): ROOMS_SCHEMA},
+        func="async_clean_rooms",
     )
     return True
 

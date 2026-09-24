@@ -317,3 +317,52 @@ def test_segment_ids_round_trip() -> None:
     for bad in ("nounderscore", "_3", "map_x"):
         with pytest.raises(ValueError):
             parse_segment_id(bad)
+
+
+
+async def test_rooms_are_cleaned_by_their_app_names_in_order(t90_capabilities) -> None:
+    from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+        CleanV2Rooms,
+    )
+
+    entity = _vacuum_with_maps(t90_capabilities)
+
+    await entity.async_clean_rooms(["kitchen", "Hall", "Kitchen"])
+
+    entity._execute_command.assert_awaited_once_with(CleanV2Rooms([3, 1]))
+
+
+async def test_a_room_name_on_the_map_in_use_wins(t90_capabilities) -> None:
+    from custom_components.ecovacs_mower.deebot_patch import vacuum_messages
+    from custom_components.ecovacs_mower.deebot_patch.vacuum_messages import (
+        CleanV2Rooms,
+    )
+
+    entity = _vacuum_with_maps(t90_capabilities)
+    vacuum_messages._ROOMS[entity._device.events]["map-b"] += (
+        vacuum_messages.VacuumRoom(9, "Hall"),
+    )
+
+    await entity.async_clean_rooms(["Hall"])
+
+    entity._execute_command.assert_awaited_once_with(CleanV2Rooms([1]))
+
+
+async def test_a_room_name_only_on_another_floor_is_refused(t90_capabilities) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    entity = _vacuum_with_maps(t90_capabilities)
+
+    with pytest.raises(HomeAssistantError, match="First floor"):
+        await entity.async_clean_rooms(["Study"])
+    entity._execute_command.assert_not_awaited()
+
+
+async def test_an_unknown_room_name_lists_the_rooms(t90_capabilities) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    entity = _vacuum_with_maps(t90_capabilities)
+
+    with pytest.raises(HomeAssistantError, match="Kitchen"):
+        await entity.async_clean_rooms(["Garage"])
+    entity._execute_command.assert_not_awaited()

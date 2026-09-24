@@ -14,6 +14,10 @@ across maps. A clean sends the rooms of one map in the app's ``freeClean``
 shape (``CleanV2Rooms``), and only for the map the robot is on: switching
 floors is left to the user, since a map switch from here could strand the
 robot on the wrong floor.
+
+``ecovacs_mower.clean_rooms`` (``async_clean_rooms``) cleans the same rooms by
+their names in the Ecovacs app, for anyone who does not want to map them to
+Home Assistant areas first. It ends in the same ``async_clean_segments``.
 """
 
 from __future__ import annotations
@@ -247,6 +251,49 @@ class EcovacsVacuum(EcovacsEntity[Capabilities], StateVacuumEntity):
             )
 
         await self._execute_command(CleanV2Rooms([room_id for _, room_id in parsed]))
+
+    async def async_clean_rooms(self, rooms: list[str]) -> None:
+        """Clean rooms given by their names in the Ecovacs app, in that order.
+
+        The ``ecovacs_mower.clean_rooms`` action: the app's room names, no
+        Home Assistant areas in between. Names match without regard to case,
+        on the map the robot is on; a name found only on another map gets the
+        same refusal as a room clean there.
+        """
+        segments = await self.async_get_segments()
+        maps = self._built_maps()
+        using = next((map_.id for map_ in maps if map_.using), None)
+
+        def lookup(map_id: str | None) -> dict[str, list[Segment]]:
+            found: dict[str, list[Segment]] = {}
+            for segment in segments:
+                if parse_segment_id(segment.id)[0] == map_id:
+                    found.setdefault(segment.name.casefold(), []).append(segment)
+            return found
+
+        on_this_map = lookup(using)
+        segment_ids: list[str] = []
+        for name in rooms:
+            key = name.strip().casefold()
+            matches = on_this_map.get(key)
+            if matches is None:
+                elsewhere = [s for s in segments if s.name.casefold() == key]
+                if elsewhere:
+                    # Refused by async_clean_segments, with the floor's name.
+                    matches = elsewhere[:1]
+                else:
+                    known = ", ".join(sorted({s.name for s in segments}))
+                    raise HomeAssistantError(
+                        f"No room named {name!r} on the robot. Rooms: {known}."
+                    )
+            if len(matches) > 1:
+                raise HomeAssistantError(
+                    f"More than one room is named {name!r}; rename one in the app."
+                )
+            if matches[0].id not in segment_ids:
+                segment_ids.append(matches[0].id)
+
+        await self.async_clean_segments(segment_ids)
 
     async def _clean_command(self, action: CleanAction) -> None:
         """Send a capability-provided vacuum cleaning command."""
