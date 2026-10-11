@@ -58,12 +58,15 @@ class MowerProfile:
     ``area_parameters`` gives the class the ``MowerAreaEvent`` refresh and the
     per-area number entities. ``zone_mowing`` gives it ``MowArea`` as its
     ``clean.action.area`` capability, which is what the ``mow_area`` service
-    checks for.
+    checks for. ``border_mowing`` gives it the ``mow_border`` button; that one
+    gates an entity rather than a capability, because ``Capabilities`` has no
+    field for a border job, and ``button.py`` reads it from the profile.
     """
 
     device_class: str
     area_parameters: bool = False
     zone_mowing: bool = False
+    border_mowing: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -120,27 +123,23 @@ class MowerProfile:
 #                     Pro; see docs/area-parameter-capability.md.
 #   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
 #                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
+#   border_mowing   — 77atlz: the app's border-job request captured on the
+#                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
+#                     {"type": "border", "value": "mid:<mid>"}, acknowledged
+#                     code 0. Only the V2 shape is captured; the non-V2 one is
+#                     a guess nobody has tested, which is why no non-V2 class
+#                     has the flag — see border.py.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns"),
     "9bts2s": MowerProfile("9bts2s"),
     "2px96q": MowerProfile("2px96q"),
-    "77atlz": MowerProfile("77atlz"),
+    "77atlz": MowerProfile("77atlz", border_mowing=True),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
     "xmp9ds": MowerProfile("xmp9ds"),
     "o4kvvk": MowerProfile("o4kvvk"),
     "6n9pcz": MowerProfile("6n9pcz"),
     "0jbd6s": MowerProfile("0jbd6s"),
 }
-
-# Classes on which the border-job request shape has been captured from the
-# app (issue #12). Like a profile flag, membership means "confirmed", not
-# "patched": the button is only built for these, because the non-V2 shape is
-# a guess nobody has tested — see border.py. Widening this tuple is how a
-# second class gains the button. The last class gate that predates
-# MowerProfile and has not been migrated to a flag.
-#   77atlz — GOAT G1-800, firmware 1.36.208: clean_V2 with
-#            {"type": "border", "value": "mid:<mid>"}, acknowledged code 0.
-BORDER_CLASSES = ("77atlz",)
 
 
 def profile_for_class(class_: str) -> MowerProfile | None:

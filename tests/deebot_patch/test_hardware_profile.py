@@ -41,3 +41,4 @@ def test_profile_flags_default_to_off() -> None:
 
     assert profile.area_parameters is False
     assert profile.zone_mowing is False
+    assert profile.border_mowing is False
