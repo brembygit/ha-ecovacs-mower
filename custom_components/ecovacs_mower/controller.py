@@ -63,6 +63,7 @@ from .deebot_patch import (
     register_mower_bus,
     verify_capabilities,
 )
+from .deebot_patch.commands import GetPosMower
 from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
@@ -391,15 +392,21 @@ class EcovacsController:
             unsub()
 
     async def _poll(self, device: Device, now: datetime) -> None:
-        """One tick: refresh the state and the mowing stats for one device.
+        """One tick: refresh the state, the mowing stats and the position.
 
         One getStats notifies both StatsEvent and MowerStatsEvent, so
         refreshing StatsEvent — which Device.__init__ always subscribes to —
         covers the mowing_progress sensor too without depending on it being
         enabled.
+
+        The position is asked for with a command of its own: some runs on the
+        G1-800 never push onPos, and deebot-client defines no map capability
+        for that class to refresh through the event bus. The tick only runs
+        while the mower is out, so a parked mower is never asked.
         """
         device.events.request_refresh(StateEvent)
         device.events.request_refresh(StatsEvent)
+        await device.execute_command(GetPosMower())
 
     async def teardown(self) -> None:
         """Disconnect controller."""

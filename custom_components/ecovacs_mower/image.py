@@ -27,6 +27,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from . import EcovacsMowerConfigEntry
+from .deebot_patch.commands import GetPosMower
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
     MowerCoveredAreaEvent,
@@ -141,6 +142,18 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
                 [x, y] for x, y in self._map.sampled_track(TRACK_ATTRIBUTE_POINTS)
             ],
         }
+
+    @override
+    async def async_update(self) -> None:
+        """Ask the mower where it is.
+
+        Reached through homeassistant.update_entity: the entity is not polled,
+        so this only happens when someone asks. A live marker is an
+        automation that calls it every few seconds while the mower is out,
+        and nobody else pays for the commands. The answer arrives as a
+        PositionsEvent, like a pushed position.
+        """
+        await self._execute_command(GetPosMower())
 
     def _bump(self) -> None:
         # Every write supersedes a pending trailing refresh, whichever event
