@@ -1,6 +1,6 @@
 # Area-parameter capability
 
-This integration provides read/write support for per-area mowing parameters on the A1600 LiDAR Pro (`e4gqia`). The mower identifies an area by `areaID`; its friendly name and its parameter values arrive through separate protocol responses.
+This integration provides read/write support for per-area mowing parameters on the A1600 LiDAR Pro (`e4gqia`) and the A3000 LiDAR Pro (`51rcxt`). The mower identifies an area by `areaID`; its friendly name and its parameter values arrive through separate protocol responses.
 
 ## Functional flow
 
@@ -26,11 +26,11 @@ These commands live in `deebot_patch/commands.py`, alongside the other patched p
 
 ## What Home Assistant owns
 
-`area_numbers.py` turns the raw `MowerArea` state into the four Home Assistant parameter entities. The A1600-specific mappings between raw protocol values and HA values are defined there because those mappings are part of the validated behavior of that mower model, not generic Ecovacs protocol knowledge.
+`area_numbers.py` turns the raw `MowerArea` state into the four Home Assistant parameter entities. The model-specific mappings between raw protocol values and HA values are defined there because those mappings are part of the validated behavior of each mower model, not generic Ecovacs protocol knowledge. The A3000 LiDAR Pro shares the A1600's mapping object, so a change to it changes both models.
 
 For a write, HA converts the requested value back to its raw representation and combines it with the other three raw values — see "Write consistency" below for where those three values come from and why. The entity does not update its state optimistically.
 
-The capability is exposed only for `e4gqia`. Other supported mower models do not receive these entities merely because they use the same protocol field names.
+The capability is exposed only for `e4gqia` and `51rcxt`, whose own readings matched the A1600's (issue #131). Other supported mower models do not receive these entities merely because they use the same protocol field names.
 
 ## Write consistency
 
@@ -53,7 +53,7 @@ A future model should be added only after its area protocol has been independent
 2. the raw meaning and valid range of each parameter;
 3. the mapping of those raw values to Home Assistant values and back;
 4. that complete parameter writes are safe with the model's observed payload format; and
-5. whether the model sends `onAreaParameter` at all — it has only been observed on `e4gqia`, firmware 1.11.31. `_PendingAreaWrite` does not depend on it, but a model that never sends it will feel slower to confirm writes.
+5. whether the model sends `onAreaParameter` at all — it has been observed on `e4gqia`, firmware 1.11.31. On `51rcxt`, firmware 1.13.10, it is inferred rather than captured: a change made in the app showed in Home Assistant immediately (PR #137). `_PendingAreaWrite` does not depend on it, but a model that never sends it will feel slower to confirm writes.
 
 Keep the raw protocol handling shared where the wire format is genuinely the same. Add model-specific value mappings in `area_numbers.py` only when they have been validated for that model, and gate the HA capability to that model. Do not assume that an identically named Ecovacs field has identical units, ranges, or semantics on another mower.
 
