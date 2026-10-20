@@ -26,7 +26,10 @@ normally triggers within milliseconds, or through the polled area refresh.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from itertools import pairwise
+from types import MappingProxyType
 from typing import Callable, override
 
 from deebot_client.capabilities import DeviceType
@@ -58,56 +61,63 @@ from .entity import EcovacsDescriptionEntity
 class AreaParameterLookup:
     """Validated raw-value lookup for one mower model parameter.
 
-    ``values`` is ordered by raw protocol value, starting at ``raw_start``.
-    Add a lookup here only when the complete raw-to-HA representation has been
-    independently verified on the specific mower model. Do not reuse a lookup
-    for another model merely because the Ecovacs field has the same name.
+    ``values_by_raw`` maps each raw protocol value the app sends to its HA
+    value, written out pair by pair so a table reads like the readings it was
+    built from. A raw value missing from the table reads as unknown and is
+    never written, so a model whose app offers only some raw values gets only
+    those. Add a lookup here only when the complete raw-to-HA representation
+    has been independently verified on the specific mower model. Do not reuse
+    a lookup for another model merely because the Ecovacs field has the same
+    name.
     """
 
-    values: tuple[float | int, ...]
-    raw_start: int = 1
+    # Excluded from the hash: a mapping is not hashable, and the frozen
+    # dataclass would otherwise generate a __hash__ that fails on first use.
+    values_by_raw: Mapping[int, float | int] = field(hash=False)
 
     def __post_init__(self) -> None:
-        """Reject lookup tables that cannot be exposed as a HA number step."""
-        if not self.values:
-            raise ValueError("Area parameter lookup must contain at least one value")
-        if len(self.values) < 2:
-            return
-        steps = {
-            round(float(b) - float(a), 10)
-            for a, b in zip(self.values, self.values[1:])
-        }
-        if len(steps) != 1 or not steps or next(iter(steps)) == 0:
-            raise ValueError("Area parameter lookup values must have one non-zero step")
+        """Reject tables that cannot be exposed as a HA number step.
 
-    @property
-    def raw_end(self) -> int:
-        """Return the highest raw value represented by this lookup."""
-        return self.raw_start + len(self.values) - 1
+        HA's number entity has a single step, so the values must be evenly
+        spaced once sorted; the raw values themselves need not be consecutive.
+        """
+        # Read-only from here on: the table is validated data, shared between
+        # models, and must not be changed by accident after the check below.
+        object.__setattr__(
+            self, "values_by_raw", MappingProxyType(dict(self.values_by_raw))
+        )
+        if not self.values_by_raw:
+            raise ValueError("Area parameter lookup must contain at least one value")
+        values = sorted(float(value) for value in self.values_by_raw.values())
+        if len(set(values)) != len(values):
+            raise ValueError("Area parameter lookup values must be distinct")
+        if len(values) < 2:
+            return
+        steps = {round(b - a, 10) for a, b in pairwise(values)}
+        if len(steps) != 1:
+            raise ValueError("Area parameter lookup values must have one step")
 
     @property
     def native_min_value(self) -> float:
         """Return the lowest Home Assistant value represented."""
-        return float(min(self.values))
+        return float(min(self.values_by_raw.values()))
 
     @property
     def native_max_value(self) -> float:
         """Return the highest Home Assistant value represented."""
-        return float(max(self.values))
+        return float(max(self.values_by_raw.values()))
 
     @property
     def native_step(self) -> float:
         """Return the HA step represented by this lookup."""
-        if len(self.values) < 2:
+        if len(self.values_by_raw) < 2:
             return 1.0
-        return abs(round(float(self.values[1]) - float(self.values[0]), 10))
+        values = sorted(float(value) for value in self.values_by_raw.values())
+        return round(values[1] - values[0], 10)
 
     def to_native(self, raw_value: int) -> float | int | None:
         """Convert a raw mower value to its HA representation."""
-        index = raw_value - self.raw_start
-        if index < 0 or index >= len(self.values):
-            return None
-        return self.values[index]
+        return self.values_by_raw.get(raw_value)
 
     def to_raw(self, native_value: float) -> int | None:
         """Convert an HA value to its raw mower representation.
@@ -116,9 +126,9 @@ class AreaParameterLookup:
         ``min + step * n``, and ``0.40 + 0.05 * 4`` is ``0.6000000000000001``.
         """
         tolerance = self.native_step / 2
-        for index, value in enumerate(self.values):
+        for raw_value, value in self.values_by_raw.items():
             if abs(float(value) - native_value) < tolerance:
-                return self.raw_start + index
+                return raw_value
         return None
 
 
@@ -160,19 +170,19 @@ class AreaParameterMapping:
 # The following three tables are the A1600 LiDAR Pro's validated HA
 # representations, which the A3000 LiDAR Pro shares through ``_A1600_MAPPING``:
 # a change made on new A1600 evidence changes both models, so it needs
-# evidence from both. Each tuple position corresponds to a raw value beginning
-# at one. The tuple is therefore the single source of truth for conversion in
-# both directions and for the HA number entity's min/max/step metadata.
+# evidence from both. Each pair is a raw value and its HA value, so each table
+# is the single source of truth for conversion in both directions and for the
+# HA number entity's min/max/step metadata.
 _A1600_MOW_HEIGHT = AreaParameterLookup(
-    values=(9, 8, 7, 6, 5, 4, 3),
+    {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3},
 )
 
 _A1600_CUT_SPEED = AreaParameterLookup(
-    values=(0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40),
+    {1: 0.70, 2: 0.65, 3: 0.60, 4: 0.55, 5: 0.50, 6: 0.45, 7: 0.40},
 )
 
 _A1600_OBSTACLE_HEIGHT = AreaParameterLookup(
-    values=(10, 15, 20),
+    {1: 10, 2: 15, 3: 20},
 )
 
 
@@ -230,7 +240,7 @@ _A1600_MAPPING = AreaParameterMapping(
 # A1600 representation merely because its protocol fields have the same names.
 #
 # To support another model, add one explicit entry here. Populate each lookup
-# from that model's independently verified raw values, in raw-value order, and
+# from that model's independently verified raw values, one pair per value, and
 # provide its verified angle formula (or a separate formula definition). The
 # generic entity code below derives conversion and number limits from these
 # mappings; no model-specific ranges belong in ``area_number_descriptions``.

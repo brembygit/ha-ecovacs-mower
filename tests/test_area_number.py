@@ -110,7 +110,7 @@ def test_every_slider_position_maps_to_a_raw_speed() -> None:
     speed = _mapping().cut_speed
     positions = [
         speed.native_min_value + speed.native_step * n
-        for n in range(len(speed.values))
+        for n in range(len(speed.values_by_raw))
     ]
 
     assert [speed.to_raw(value) for value in positions] == [7, 6, 5, 4, 3, 2, 1]
@@ -515,3 +515,70 @@ def test_the_a1600_cut_angle_rejects_values_outside_a_circle() -> None:
 
     assert angle.to_native(360) is None
     assert angle.to_raw(-1) is None
+
+
+# The A1600 tables as they were before each value named its raw value: value
+# n belonged to raw n, counting from 1. The explicit tables must behave the same.
+_A1600_POSITIONAL = {
+    "mow_height": (9, 8, 7, 6, 5, 4, 3),
+    "cut_speed": (0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40),
+    "obstacle_height": (10, 15, 20),
+}
+
+
+@pytest.mark.parametrize("parameter", sorted(_A1600_POSITIONAL))
+def test_the_a1600_tables_behave_as_before(parameter) -> None:
+    lookup = getattr(_mapping(), parameter)
+    positional = _A1600_POSITIONAL[parameter]
+    expected = dict(enumerate(positional, start=1))
+
+    for raw in range(-1, len(positional) + 3):
+        assert lookup.to_native(raw) == expected.get(raw)
+    for raw, value in expected.items():
+        assert lookup.to_raw(value) == raw
+    assert lookup.native_min_value == float(min(positional))
+    assert lookup.native_max_value == float(max(positional))
+    assert lookup.native_step == abs(round(positional[1] - positional[0], 10))
+
+
+def test_a_lookup_offers_only_the_raw_values_it_names() -> None:
+    from custom_components.ecovacs_mower.area_numbers import AreaParameterLookup
+
+    lookup = AreaParameterLookup({4: 0.50, 7: 0.35})
+
+    assert [lookup.to_native(raw) for raw in range(1, 9)] == [
+        None, None, None, 0.50, None, None, 0.35, None,
+    ]
+    assert lookup.to_raw(0.35) == 7
+    assert lookup.to_raw(0.50) == 4
+    assert lookup.to_raw(0.70) is None
+    assert (lookup.native_min_value, lookup.native_max_value) == (0.35, 0.50)
+    assert lookup.native_step == 0.15
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        {},
+        {1: 3, 2: 3},
+        {1: 3, 2: 4, 3: 6},
+    ],
+    ids=["empty", "duplicate value", "uneven step"],
+)
+def test_a_lookup_rejects_a_table_no_number_entity_can_show(table) -> None:
+    from custom_components.ecovacs_mower.area_numbers import AreaParameterLookup
+
+    with pytest.raises(ValueError):
+        AreaParameterLookup(table)
+
+
+def test_a_lookup_cannot_be_changed_after_validation() -> None:
+    from custom_components.ecovacs_mower.area_numbers import AreaParameterLookup
+
+    table = {1: 9, 2: 8}
+    lookup = AreaParameterLookup(table)
+    table[3] = 1
+
+    assert lookup.to_native(3) is None
+    with pytest.raises(TypeError):
+        lookup.values_by_raw[3] = 1  # type: ignore[index]
