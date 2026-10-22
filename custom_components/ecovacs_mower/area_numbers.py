@@ -88,14 +88,20 @@ class AreaParameterLookup:
         )
         if not self.values_by_raw:
             raise ValueError("Area parameter lookup must contain at least one value")
-        values = sorted(float(value) for value in self.values_by_raw.values())
+        values = self._sorted_values()
         if len(set(values)) != len(values):
             raise ValueError("Area parameter lookup values must be distinct")
         if len(values) < 2:
             return
+        # Rounded as native_step is, so distinct values a rounding apart are
+        # refused here rather than give a zero step that matches nothing.
         steps = {round(b - a, 10) for a, b in pairwise(values)}
-        if len(steps) != 1:
-            raise ValueError("Area parameter lookup values must have one step")
+        if len(steps) != 1 or 0 in steps:
+            raise ValueError("Area parameter lookup values must have one non-zero step")
+
+    def _sorted_values(self) -> list[float]:
+        """The values as floats, in order: what the step is checked and taken on."""
+        return sorted(float(value) for value in self.values_by_raw.values())
 
     @property
     def native_min_value(self) -> float:
@@ -112,7 +118,7 @@ class AreaParameterLookup:
         """Return the HA step represented by this lookup."""
         if len(self.values_by_raw) < 2:
             return 1.0
-        values = sorted(float(value) for value in self.values_by_raw.values())
+        values = self._sorted_values()
         return round(values[1] - values[0], 10)
 
     def to_native(self, raw_value: int) -> float | int | None:

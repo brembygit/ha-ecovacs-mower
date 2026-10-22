@@ -517,8 +517,8 @@ def test_the_a1600_cut_angle_rejects_values_outside_a_circle() -> None:
     assert angle.to_raw(-1) is None
 
 
-# The A1600 tables as they were before each value named its raw value: value
-# n belonged to raw n, counting from 1. The explicit tables must behave the same.
+# The validated A1600 readings, raw values counting from 1. The tables must name
+# exactly these pairs.
 _A1600_POSITIONAL = {
     "mow_height": (9, 8, 7, 6, 5, 4, 3),
     "cut_speed": (0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40),
@@ -562,8 +562,10 @@ def test_a_lookup_offers_only_the_raw_values_it_names() -> None:
         {},
         {1: 3, 2: 3},
         {1: 3, 2: 4, 3: 6},
+        # Distinct, but a step that rounds to zero would match no value at all.
+        {1: 1.0, 2: 1.00000000001},
     ],
-    ids=["empty", "duplicate value", "uneven step"],
+    ids=["empty", "duplicate value", "uneven step", "step rounds to zero"],
 )
 def test_a_lookup_rejects_a_table_no_number_entity_can_show(table) -> None:
     from custom_components.ecovacs_mower.area_numbers import AreaParameterLookup
