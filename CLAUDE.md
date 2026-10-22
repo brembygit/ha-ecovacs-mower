@@ -87,3 +87,17 @@ The per-area parameter entities in `area_numbers.py` are another exception: dyna
 - A model-specific capability is enabled per class only once it is validated on that class: set the matching profile flag (`area_parameters`, `area_names`, `zone_mowing`, `border_mowing`, `uwb_beacons`), and for the area parameters also add that model's own entry to `AREA_PARAMETER_MAPPINGS`. A field with the same name on another GOAT is not evidence that its values mean the same. `docs/area-parameter-capability.md` lists what to verify for the area parameters. A new per-class gate is a new `MowerProfile` flag defaulting to `False`, never a module-level tuple of classes.
 - Version is bumped in `manifest.json`, and that bump is what publishes a release once it lands on `master` (see above). The bump belongs in its own commit by the maintainer after the work has landed, never in a feature PR: `release.yml` tags whatever version it finds without checking that it is newer than the last tag, so two branches bumping in parallel publish releases out of order. `deebot-client` is pinned there and in `requirements-test.txt` — keep them in sync.
 - Conventional commits, no AI attribution.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `nord-/ha-ecovacs-mower` (the `origin` remote), accessed with `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels, each named after its role. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
